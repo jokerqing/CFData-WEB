@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,5 +42,27 @@ func TestNormalizeScheduleDefaultsAndNextRun(t *testing.T) {
 	next := nextScheduledRun(cfg, now)
 	if got := next.Format("2006-01-02 15:04"); got != "2026-09-16 14:00" {
 		t.Fatalf("unexpected next run: %s", got)
+	}
+}
+
+func TestNSBStartDefinesLossMaxBeforeUse(t *testing.T) {
+	source, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "function startNSBTask()")
+	if start < 0 {
+		t.Fatal("startNSBTask function not found")
+	}
+	end := strings.Index(text[start:], "function escapeHTML(v)")
+	if end < 0 {
+		t.Fatal("startNSBTask end boundary not found")
+	}
+	body := text[start : start+end]
+	declaration := strings.Index(body, "const lossMax =")
+	use := strings.Index(body, "nsbLossMaxValue = lossMax")
+	if declaration < 0 || use < 0 || declaration > use {
+		t.Fatal("startNSBTask must define lossMax before using it")
 	}
 }

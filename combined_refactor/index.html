@@ -4785,6 +4785,7 @@
             const resultLimit = parseInt(document.getElementById('nsbResultLimit').value) || 0;
             const targetDC = document.getElementById('nsbTargetDC').value.trim();
             const speedMin = parseFloat(document.getElementById('nsbSpeedMin').value) || 0;
+            const lossMax = Math.max(0, parseFloat(document.getElementById('nsbLossMax')?.value || '0') || 0);
             const speedLimit = parseInt(document.getElementById('nsbSpeedLimit').value) || 0;
             nsbSpeedMinValue = speedMin;
             nsbLossMaxValue = lossMax;
