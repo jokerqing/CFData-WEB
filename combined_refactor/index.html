@@ -2194,7 +2194,7 @@
                     </div>
                     <div class="modal-field github-field">
                         <label>GitHub Token</label>
-                        <input id="githubToken" type="password" autocomplete="off" placeholder="repo 权限 token">
+                        <input id="githubToken" type="password" autocomplete="off" placeholder="首次输入；以后留空使用服务器已保存 token">
                     </div>
                     <div class="modal-field github-field">
                         <label>仓库 owner/repo</label>
@@ -2213,7 +2213,7 @@
                         <input id="githubMessage" type="text" value="update cfdata results">
                     </div>
                     <div class="modal-field full github-field">
-                        <label class="inline-check"><input id="githubSaveToken" type="checkbox"> 保存 token 到本机浏览器（使用 WebCrypto 加密存储）</label>
+                        <label class="inline-check"><input id="githubSaveToken" type="checkbox" checked> 永久保存 token 到 Docker 持久化目录（仅服务端可读）</label>
                     </div>
                     <div class="modal-field full github-field">
                         <label>快速上传指定文件（不使用上方结果内容）</label>
@@ -2485,7 +2485,6 @@
         const officialAutoUploadStorageKey = 'cfdata-auto-upload-official';
         const nsbAutoUploadStorageKey = 'cfdata-auto-upload-nsb';
         const githubSessionTokens = new Map();
-        const githubTokenCryptoSalt = 'cfdata-github-token-v1';
         const edgetunnelAccountStorageKey = 'cfdata-edgetunnel-accounts';
         const edgetunnelSessionPasswords = new Map();
 
@@ -5177,7 +5176,7 @@
         function renderGitHubAccounts() {
             const select = document.getElementById('githubAccountSelect');
             const accounts = getGitHubAccounts();
-            const accountOptions = '<option value="">新账户/不使用保存配置</option>' + accounts.map((a, i) => `<option value="${i}">${escapeHTML(a.name || a.repo || 'GitHub账户')} ${a.tokenHash ? '(' + escapeHTML(a.tokenHash.slice(0, 10)) + ')' : ''}</option>`).join('');
+            const accountOptions = '<option value="">新账户/不使用保存配置</option>' + accounts.map((a, i) => `<option value="${i}">${escapeHTML(a.name || a.repo || 'GitHub账户')}</option>`).join('');
             if (select) select.innerHTML = accountOptions;
             const autoSelect = document.getElementById('nsbAutoUploadAccount');
             if (autoSelect) {
@@ -5199,13 +5198,14 @@
 
         async function migrateLegacyGitHubToken(account, idx) {
             if (!account || !account.token) return '';
-            const token = String(account.token || '');
+            const token = String(account.token || '').trim();
             const accounts = getGitHubAccounts();
             const current = accounts[idx];
             if (!current) return token;
             delete current.token;
-            current.tokenHash = current.tokenHash || await sha256Hex(token);
-            current.tokenCipher = current.tokenCipher || await encryptGitHubToken(normalizeGitHubAccountKey(current), token);
+            delete current.tokenCipher;
+            delete current.tokenHash;
+            current.saveToken = true;
             saveGitHubAccounts(accounts);
             githubSessionTokens.set(normalizeGitHubAccountKey(current), token);
             renderGitHubAccounts();
@@ -5227,22 +5227,12 @@
             document.getElementById('githubPath').value = account.path || '';
             document.getElementById('githubMessage').value = account.message || 'update cfdata results';
             const accountKey = normalizeGitHubAccountKey(account);
-            const sessionToken = githubSessionTokens.get(accountKey) || '';
-            document.getElementById('githubToken').value = sessionToken;
-            document.getElementById('githubSaveToken').checked = !!account.tokenCipher || !!account.token || githubSessionTokens.has(accountKey);
-            if (!sessionToken && account.token) {
+            document.getElementById('githubToken').value = githubSessionTokens.get(accountKey) || '';
+            document.getElementById('githubSaveToken').checked = account.saveToken !== false;
+            if (account.token) {
                 migrateLegacyGitHubToken(account, idx).then((token) => {
                     if (token && document.getElementById('githubAccountSelect').value === String(idx)) {
                         document.getElementById('githubToken').value = token;
-                    }
-                });
-            } else if (!sessionToken && account.tokenCipher) {
-                decryptStoredGitHubToken(account).then((token) => {
-                    if (token) {
-                        githubSessionTokens.set(accountKey, token);
-                        if (document.getElementById('githubAccountSelect').value === String(idx)) {
-                            document.getElementById('githubToken').value = token;
-                        }
                     }
                 });
             }
@@ -5252,7 +5242,7 @@
             ['githubAccountName', 'githubRepo', 'githubPath', 'githubToken'].forEach((id) => document.getElementById(id).value = '');
             document.getElementById('githubBranch').value = 'main';
             document.getElementById('githubMessage').value = 'update cfdata results';
-            document.getElementById('githubSaveToken').checked = false;
+            document.getElementById('githubSaveToken').checked = true;
         }
 
         function deleteSelectedGitHubAccount() {
@@ -5267,13 +5257,6 @@
             renderGitHubAccounts();
         }
 
-        async function sha256Hex(text) {
-            if (!text || !crypto.subtle) return '';
-            const data = new TextEncoder().encode(text);
-            const digest = await crypto.subtle.digest('SHA-256', data);
-            return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
-        }
-
         function bytesToBase64(bytes) {
             return btoa(String.fromCharCode(...bytes));
         }
@@ -5282,59 +5265,25 @@
             return Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
         }
 
-        async function getGitHubTokenCryptoKey(accountName) {
-            if (!crypto.subtle) return null;
-            const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(`${location.origin}|${accountName}|${githubTokenCryptoSalt}`), 'PBKDF2', false, ['deriveKey']);
-            return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: new TextEncoder().encode(githubTokenCryptoSalt), iterations: 120000, hash: 'SHA-256' }, material, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
-        }
-
-        async function encryptGitHubToken(accountName, token) {
-            const key = await getGitHubTokenCryptoKey(accountName);
-            if (!key) return '';
-            const iv = crypto.getRandomValues(new Uint8Array(12));
-            const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(token));
-            return `${bytesToBase64(iv)}.${bytesToBase64(new Uint8Array(cipher))}`;
-        }
-
-        async function decryptStoredGitHubToken(account) {
-            try {
-                if (!account.tokenCipher) return '';
-                const [ivText, cipherText] = account.tokenCipher.split('.');
-                const key = await getGitHubTokenCryptoKey(account.name || account.repo || '');
-                if (!key) return '';
-                const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64ToBytes(ivText) }, key, base64ToBytes(cipherText));
-                return new TextDecoder().decode(plain);
-            } catch (_) {
-                return '';
-            }
-        }
-
         async function saveCurrentGitHubAccount(payload) {
-            const name = document.getElementById('githubAccountName').value.trim() || payload.repo;
+            const name = document.getElementById('githubAccountName').value.trim() || `${payload.owner}/${payload.repo}`;
             if (!name) return;
             const rememberToken = document.getElementById('githubSaveToken').checked;
             const accounts = getGitHubAccounts();
-            const tokenHash = await sha256Hex(payload.token);
             const next = {
                 name,
                 repo: `${payload.owner}/${payload.repo}`,
                 branch: payload.branch,
                 path: payload.path,
                 message: payload.message,
-                tokenHash,
+                saveToken: rememberToken,
             };
-            if (rememberToken) {
-                githubSessionTokens.set(name, payload.token);
-                next.tokenCipher = await encryptGitHubToken(name, payload.token);
-                if (!next.tokenCipher) {
-                    showNoticeCard('当前浏览器不支持 WebCrypto，无法安全保存 token；本次仍会上传，但不会持久保存 token');
-                }
-            } else {
-                githubSessionTokens.delete(name);
-            }
-            const existing = accounts.findIndex((a) => a.name === name);
+            if (payload.token) githubSessionTokens.set(name, payload.token);
+            else if (!rememberToken) githubSessionTokens.delete(name);
+            const existing = accounts.findIndex((a) => a.name === name || a.repo === next.repo);
             if (existing >= 0) accounts[existing] = next;
             else accounts.push(next);
+            payload.saveToken = rememberToken;
             saveGitHubAccounts(accounts);
             renderGitHubAccounts();
         }
@@ -6009,7 +5958,6 @@
                 message: document.getElementById('githubMessage').value.trim() || 'update cfdata results',
                 content,
             };
-            if (!payload.token) return showNoticeCard('Token 不能为空');
             await saveCurrentGitHubAccount(payload);
             sendGitHubUpload(payload);
             log('已提交 GitHub 上传请求');
@@ -6075,12 +6023,7 @@
             const accountKey = normalizeGitHubAccountKey(account);
             let token = githubSessionTokens.get(accountKey) || '';
             if (!token && account.token) token = await migrateLegacyGitHubToken(account, idx);
-            if (!token && account.tokenCipher) token = await decryptStoredGitHubToken(account);
             const enabled = document.getElementById(enabledId)?.value === 'on';
-            if (enabled && !token) {
-                showNoticeCard('无法读取该账户的 Token，请在结果操作中重新保存 GitHub 账户与 Token');
-                return;
-            }
             const times = String(document.getElementById(timesId)?.value || '02:00,14:00')
                 .split(',').map((value) => value.trim()).filter(Boolean);
             const format = selectedFormat === 'csv' ? 'csv' : 'txt';
@@ -6163,14 +6106,9 @@
             const account = getGitHubAccounts()[idx];
             const accountKey = normalizeGitHubAccountKey(account);
             let token = githubSessionTokens.get(accountKey) || '';
-            if (!token && account?.token) {
-                token = await migrateLegacyGitHubToken(account, idx);
-            } else if (!token && account?.tokenCipher) {
-                token = await decryptStoredGitHubToken(account);
-                if (token) githubSessionTokens.set(accountKey, token);
-            }
-            if (!account || !token || !account.repo) {
-                log('自动上传失败: 已保存账户缺少 token 或仓库配置');
+            if (!token && account?.token) token = await migrateLegacyGitHubToken(account, idx);
+            if (!account || !account.repo) {
+                log('自动上传失败: 已保存账户缺少仓库配置');
                 return;
             }
             const fields = getDefaultResultFieldOrderFor(mode, format || 'txt');
@@ -6193,6 +6131,7 @@
             autoUploadKeys.add(uploadKey);
             const payload = {
                 token,
+                saveToken: account.saveToken !== false,
                 owner: repoParts[0], repo: repoParts[1],
                 branch: account.branch || 'main',
                 path,

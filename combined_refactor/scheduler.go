@@ -81,6 +81,22 @@ func schedulerBaseDir() string {
 func schedulerConfigPath() string { return filepath.Join(schedulerBaseDir(), "cfdata-schedule.json") }
 func schedulerTokenPath() string  { return filepath.Join(schedulerBaseDir(), "cfdata-schedule.token") }
 
+func scheduledGitHubToken(cfg scheduleConfig) string {
+	token, _ := loadGitHubTokenForFullRepo(cfg.GitHubRepo)
+	if token != "" {
+		return token
+	}
+	legacyToken, _ := os.ReadFile(schedulerTokenPath())
+	token = strings.TrimSpace(string(legacyToken))
+	if token == "" {
+		return ""
+	}
+	if owner, repo, err := splitGitHubRepo(cfg.GitHubRepo); err == nil {
+		_ = saveGitHubToken(owner, repo, token)
+	}
+	return token
+}
+
 func normalizeScheduleConfig(cfg scheduleConfig) (scheduleConfig, error) {
 	if len(cfg.Times) == 0 {
 		cfg.Times = []string{"02:00", "14:00"}
@@ -199,11 +215,15 @@ func saveSchedule(req scheduleSaveRequest) error {
 		return err
 	}
 	token := strings.TrimSpace(req.Token)
-	existingToken, _ := os.ReadFile(schedulerTokenPath())
-	if token == "" {
-		token = strings.TrimSpace(string(existingToken))
-	}
 	parts := strings.Split(cfg.GitHubRepo, "/")
+	if token != "" && len(parts) == 2 {
+		if err := saveGitHubToken(parts[0], parts[1], token); err != nil {
+			return err
+		}
+	}
+	if token == "" {
+		token = scheduledGitHubToken(cfg)
+	}
 	if cfg.Enabled && (len(parts) != 2 || parts[0] == "" || parts[1] == "" || token == "") {
 		return errors.New("启用定时任务需要有效的 GitHub 仓库和 Token")
 	}
@@ -214,12 +234,7 @@ func saveSchedule(req scheduleSaveRequest) error {
 	if err := os.WriteFile(schedulerConfigPath(), data, 0o600); err != nil {
 		return err
 	}
-	if strings.TrimSpace(req.Token) != "" {
-		if err := os.WriteFile(schedulerTokenPath(), []byte(strings.TrimSpace(req.Token)+"\n"), 0o600); err != nil {
-			return err
-		}
-		_ = os.Chmod(schedulerTokenPath(), 0o600)
-	}
+
 	officialScheduler.mu.Lock()
 	officialScheduler.config = cfg
 	officialScheduler.tokenConfigured = token != ""
@@ -279,9 +294,7 @@ func formatScheduleTime(value time.Time) string {
 func startScheduler() {
 	officialScheduler.mu.Lock()
 	officialScheduler.config = loadScheduleConfig()
-	if data, err := os.ReadFile(schedulerTokenPath()); err == nil {
-		officialScheduler.tokenConfigured = strings.TrimSpace(string(data)) != ""
-	}
+	officialScheduler.tokenConfigured = scheduledGitHubToken(officialScheduler.config) != ""
 	cfg := officialScheduler.config
 	officialScheduler.mu.Unlock()
 	fmt.Printf("[schedule] enabled=%v times=%s timezone=%s\n", cfg.Enabled, strings.Join(cfg.Times, ","), schedulerTimezone)
@@ -352,8 +365,8 @@ func startScheduledRun(reason string) error {
 }
 
 func runScheduledOfficial(cfg scheduleConfig) error {
-	tokenBytes, err := os.ReadFile(schedulerTokenPath())
-	if err != nil || strings.TrimSpace(string(tokenBytes)) == "" {
+	token := scheduledGitHubToken(cfg)
+	if token == "" {
 		return errors.New("定时任务未配置 GitHub Token")
 	}
 	parts := strings.Split(cfg.GitHubRepo, "/")
@@ -370,7 +383,7 @@ func runScheduledOfficial(cfg scheduleConfig) error {
 		export: cliExportConfig{
 			Format: cfg.Format, Fields: "compact", GitHub: true, GitHubSet: true,
 			GHRepo: cfg.GitHubRepo, GHBranch: cfg.GitHubBranch, GHPath: cfg.GitHubPath,
-			GHMessage: cfg.GitHubMessage, GHToken: strings.TrimSpace(string(tokenBytes)),
+			GHMessage: cfg.GitHubMessage, GHToken: token,
 		},
 	}
 	return runOfficialCLI(cliCfg)
@@ -384,8 +397,8 @@ func runScheduledTask(cfg scheduleConfig) error {
 }
 
 func runScheduledNSB(cfg scheduleConfig) error {
-	tokenBytes, err := os.ReadFile(schedulerTokenPath())
-	if err != nil || strings.TrimSpace(string(tokenBytes)) == "" {
+	token := scheduledGitHubToken(cfg)
+	if token == "" {
 		return errors.New("定时任务未配置 GitHub Token")
 	}
 	parts := strings.Split(cfg.GitHubRepo, "/")
@@ -405,7 +418,7 @@ func runScheduledNSB(cfg scheduleConfig) error {
 		export: cliExportConfig{
 			Format: cfg.Format, Fields: "compact", GitHub: true, GitHubSet: true,
 			GHRepo: cfg.GitHubRepo, GHBranch: cfg.GitHubBranch, GHPath: cfg.GitHubPath,
-			GHMessage: cfg.GitHubMessage, GHToken: strings.TrimSpace(string(tokenBytes)),
+			GHMessage: cfg.GitHubMessage, GHToken: token,
 		},
 	}
 	return runNSBCLI(cliCfg)

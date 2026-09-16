@@ -456,6 +456,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				session.sendWSMessage("error", "github_upload 参数解析失败")
 				return
 			}
+			if err := prepareGitHubUpload(&params); err != nil {
+				session.sendWSMessage("github_upload_error", map[string]interface{}{"path": params.Path, "message": err.Error(), "silent": params.Silent})
+				return
+			}
 			safeGo("github-upload", session, func() {
 				downloadURL, err := uploadGitHubContentWithRetry(r.Context(), params, func(attempt, total int, err error) {
 					if params.Silent {
