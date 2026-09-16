@@ -639,7 +639,7 @@ done:
 	return float64(written) / duration.Seconds() / 1024, ""
 }
 
-func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent, outFile string, maxThreads, fallbackPort, speedTest int, speedURL string, enableTLS bool, delay int, resultLimit int, targetDC string, speedMin float64, speedLimit int, compact bool, scanMode string) {
+func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent, outFile string, maxThreads, fallbackPort, speedTest int, speedURL string, enableTLS bool, delay int, resultLimit int, targetDC string, speedMin, lossMax float64, speedLimit int, compact bool, scanMode string) {
 	session.sendWSMessage("log", fmt.Sprintf("开始非标优选：%s", fileName))
 
 	tmpFile, err := os.CreateTemp(".", "cfdata-nsb-*.txt")
@@ -820,7 +820,7 @@ func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent,
 		session.sendWSMessage("log", fmt.Sprintf("开始测速：%d 条记录，线程数=%d，目标上限=%d，测速阈值=%.2fMB/s", len(nsbResults), speedTest, speedLimit, speedMin))
 
 		reportNSBProgress(session, "speed", 0, speedLimit, "测速中")
-		speedCanceled := runNSBSpeedWorkers(ctx, nsbResults, speedTest, speedLimit, speedMin, func(tested, qualified int) {
+		speedCanceled := runNSBSpeedWorkers(ctx, nsbResults, speedTest, speedLimit, speedMin, lossMax, func(tested, qualified int) {
 			reportNSBProgress(session, "speed", min(qualified, speedLimit), speedLimit, "测速中")
 		}, func(idx int, speedErr string) {
 			res := &nsbResults[idx]
@@ -848,7 +848,7 @@ func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent,
 			if nsbResults[i].speedTested && nsbResults[i].speedText == "" {
 				nsbResults[i].speedText = fmt.Sprintf("%.2fMB/s", nsbResults[i].downloadSpeed/1024)
 			}
-			if nsbResults[i].speedTested && nsbResults[i].downloadSpeed/1024 >= speedMin {
+			if nsbResults[i].speedTested && nsbResults[i].downloadSpeed/1024 >= speedMin && lossRateWithinLimit(nsbResults[i].lossRate, lossMax) {
 				nsbResults[i].speedQualified = true
 				qualifiedCount++
 			}
@@ -884,7 +884,7 @@ func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent,
 	session.sendWSMessage("log", fmt.Sprintf("非标优选完成，结果文件: %s", outFile))
 }
 
-func runNSBSpeedBatch(ctx context.Context, session *appSession, rows []nsbScanMessage, maxWorkers int, speedURL string, enableTLS bool, speedMin float64, speedLimit int, skipTested bool, compact bool) {
+func runNSBSpeedBatch(ctx context.Context, session *appSession, rows []nsbScanMessage, maxWorkers int, speedURL string, enableTLS bool, speedMin, lossMax float64, speedLimit int, skipTested bool, compact bool) {
 	if speedLimit <= 0 {
 		session.sendWSMessage("log", "非标批量测速已关闭（测速上限 0）")
 		session.sendWSMessage("nsb_speed_complete", map[string]interface{}{"qualified": 0, "limit": speedLimit})
@@ -922,7 +922,7 @@ func runNSBSpeedBatch(ctx context.Context, session *appSession, rows []nsbScanMe
 
 	session.sendWSMessage("log", fmt.Sprintf("开始非标测速：%d 条记录，线程数=%d，目标上限=%d，测速阈值=%.2fMB/s", len(results), maxWorkers, speedLimit, speedMin))
 	reportNSBProgress(session, "speed", 0, speedLimit, "测速中")
-	speedCanceled := runNSBSpeedWorkers(ctx, results, maxWorkers, speedLimit, speedMin, func(tested, qualified int) {
+	speedCanceled := runNSBSpeedWorkers(ctx, results, maxWorkers, speedLimit, speedMin, lossMax, func(tested, qualified int) {
 		reportNSBProgress(session, "speed", qualified, speedLimit, "测速中")
 	}, func(idx int, speedErr string) {
 		res := &results[idx]
@@ -976,28 +976,28 @@ func nsbMessageToResult(row nsbScanMessage) (iptestResult, bool) {
 		return iptestResult{}, false
 	}
 	return iptestResult{
-		ipAddr:       strings.TrimSpace(row.IP),
-		port:         port,
-		dataCenter:   row.DC,
-		locCode:      row.Loc,
-		region:       row.Region,
-		city:         row.City,
-		latency:      row.Latency,
-		lossRate:     parsePercent(row.LossRate),
-		outboundIP:   row.OutboundIP,
-		ipType:       row.IPType,
-		asnNumber:    row.ASNNumber,
-		asnOrg:       row.ASNOrg,
-		visitScheme:  firstNonEmpty(row.VisitScheme, mapBoolTLS(row.TLS)),
-		tlsVersion:   row.TLSVersion,
-		sni:          row.SNI,
-		httpVersion:  row.HTTPVersion,
-		warp:         row.Warp,
-		gateway:      row.Gateway,
-		rbi:          row.RBI,
-		kex:          row.Kex,
-		timestamp:    row.Timestamp,
-		speedText:    row.Speed,
+		ipAddr:        strings.TrimSpace(row.IP),
+		port:          port,
+		dataCenter:    row.DC,
+		locCode:       row.Loc,
+		region:        row.Region,
+		city:          row.City,
+		latency:       row.Latency,
+		lossRate:      parsePercent(row.LossRate),
+		outboundIP:    row.OutboundIP,
+		ipType:        row.IPType,
+		asnNumber:     row.ASNNumber,
+		asnOrg:        row.ASNOrg,
+		visitScheme:   firstNonEmpty(row.VisitScheme, mapBoolTLS(row.TLS)),
+		tlsVersion:    row.TLSVersion,
+		sni:           row.SNI,
+		httpVersion:   row.HTTPVersion,
+		warp:          row.Warp,
+		gateway:       row.Gateway,
+		rbi:           row.RBI,
+		kex:           row.Kex,
+		timestamp:     row.Timestamp,
+		speedText:     row.Speed,
 		originalInput: row.OriginalInput,
 	}, true
 }
@@ -1031,7 +1031,7 @@ func getNSBSpeedStatus(value string, speedMin float64) string {
 	return "unqualified"
 }
 
-func runNSBSpeedWorkers(ctx context.Context, results []iptestResult, maxWorkers, targetQualified int, speedMin float64, onProgress func(tested, qualified int), onResult func(idx int, speedErr string), work func(idx int) (float64, string)) bool {
+func runNSBSpeedWorkers(ctx context.Context, results []iptestResult, maxWorkers, targetQualified int, speedMin, lossMax float64, onProgress func(tested, qualified int), onResult func(idx int, speedErr string), work func(idx int) (float64, string)) bool {
 	if len(results) == 0 {
 		return false
 	}
@@ -1069,7 +1069,7 @@ func runNSBSpeedWorkers(ctx context.Context, results []iptestResult, maxWorkers,
 				results[idx].speedText = "测速失败"
 			} else {
 				results[idx].speedText = fmt.Sprintf("%.2fMB/s", speed/1024)
-				results[idx].speedQualified = speed/1024 >= speedMin
+				results[idx].speedQualified = speed/1024 >= speedMin && lossRateWithinLimit(results[idx].lossRate, lossMax)
 			}
 			select {
 			case done <- speedDone{idx: idx, err: speedErr}:

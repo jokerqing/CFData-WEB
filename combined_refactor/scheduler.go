@@ -18,6 +18,7 @@ type scheduleConfig struct {
 	Enabled       bool     `json:"enabled"`
 	Times         []string `json:"times"`
 	Timezone      string   `json:"timezone"`
+	Mode          string   `json:"mode"`
 	IPType        int      `json:"ipType"`
 	Threads       int      `json:"threads"`
 	Port          int      `json:"port"`
@@ -28,6 +29,12 @@ type scheduleConfig struct {
 	LossMax       float64  `json:"lossMax"`
 	SpeedURL      string   `json:"speedURL"`
 	TargetDC      string   `json:"targetDC"`
+	SourceURLs    []string `json:"sourceURLs,omitempty"`
+	FallbackPort  int      `json:"fallbackPort,omitempty"`
+	SpeedTest     int      `json:"speedTest,omitempty"`
+	EnableTLS     bool     `json:"enableTLS,omitempty"`
+	ResultLimit   int      `json:"resultLimit,omitempty"`
+	Compact       bool     `json:"compact,omitempty"`
 	Format        string   `json:"format"`
 	GitHubRepo    string   `json:"githubRepo"`
 	GitHubBranch  string   `json:"githubBranch"`
@@ -55,7 +62,7 @@ var officialScheduler scheduleRuntime
 
 func defaultScheduleConfig() scheduleConfig {
 	return scheduleConfig{
-		Enabled: true, Times: []string{"02:00", "14:00"}, Timezone: schedulerTimezone,
+		Enabled: false, Times: []string{"02:00", "14:00"}, Timezone: schedulerTimezone, Mode: "official",
 		IPType: 4, Threads: 100, Port: 443, Delay: 500, ScanMode: scanModeTCPing,
 		SpeedMin: 0.1, SpeedLimit: 5, LossMax: 0, SpeedURL: autoSpeedURLValue,
 		Format: "txt", GitHubBranch: "main", GitHubPath: "results/ip.txt",
@@ -95,6 +102,9 @@ func normalizeScheduleConfig(cfg scheduleConfig) (scheduleConfig, error) {
 	sort.Strings(times)
 	cfg.Times = times
 	cfg.Timezone = schedulerTimezone
+	if cfg.Mode != "nsb" {
+		cfg.Mode = "official"
+	}
 	if cfg.IPType != 4 && cfg.IPType != 6 {
 		cfg.IPType = 4
 	}
@@ -121,6 +131,28 @@ func normalizeScheduleConfig(cfg scheduleConfig) (scheduleConfig, error) {
 	}
 	if strings.TrimSpace(cfg.SpeedURL) == "" {
 		cfg.SpeedURL = autoSpeedURLValue
+	}
+	if cfg.Mode == "nsb" {
+		urls, err := parseNetworkSourceURLs(strings.Join(cfg.SourceURLs, "\n"))
+		if err != nil {
+			return cfg, fmt.Errorf("非标定时任务网络 URL 无效: %w", err)
+		}
+		cfg.SourceURLs = urls
+		if cfg.FallbackPort <= 0 || cfg.FallbackPort > 65535 {
+			if cfg.EnableTLS {
+				cfg.FallbackPort = 443
+			} else {
+				cfg.FallbackPort = 80
+			}
+		}
+		if cfg.SpeedTest <= 0 {
+			return cfg, errors.New("非标定时测速并发必须大于 0")
+		}
+		if cfg.ResultLimit <= 0 {
+			return cfg, errors.New("非标定时扫描合格数量必须大于 0")
+		}
+	} else {
+		cfg.SourceURLs = nil
 	}
 	cfg.Format = strings.ToLower(strings.TrimSpace(cfg.Format))
 	if cfg.Format != "csv" {
@@ -302,8 +334,8 @@ func startScheduledRun(reason string) error {
 	officialScheduler.lastRun = time.Now()
 	officialScheduler.lastError = ""
 	officialScheduler.mu.Unlock()
-	safeGo("scheduled-official-run", nil, func() {
-		err := runScheduledOfficial(cfg)
+	safeGo("scheduled-run", nil, func() {
+		err := runScheduledTask(cfg)
 		officialScheduler.mu.Lock()
 		officialScheduler.running = false
 		if err != nil {
@@ -342,4 +374,39 @@ func runScheduledOfficial(cfg scheduleConfig) error {
 		},
 	}
 	return runOfficialCLI(cliCfg)
+}
+
+func runScheduledTask(cfg scheduleConfig) error {
+	if cfg.Mode == "nsb" {
+		return runScheduledNSB(cfg)
+	}
+	return runScheduledOfficial(cfg)
+}
+
+func runScheduledNSB(cfg scheduleConfig) error {
+	tokenBytes, err := os.ReadFile(schedulerTokenPath())
+	if err != nil || strings.TrimSpace(string(tokenBytes)) == "" {
+		return errors.New("定时任务未配置 GitHub Token")
+	}
+	parts := strings.Split(cfg.GitHubRepo, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return errors.New("定时任务 GitHub 仓库格式应为 owner/repo")
+	}
+	outFile := "scheduled-nsb-results." + cfg.Format
+	cliCfg := &cliConfig{
+		enabled: true, configResolved: true, mode: "nsb", scanMode: cfg.ScanMode,
+		threads: cfg.Threads, delay: cfg.Delay, resultLimit: cfg.ResultLimit,
+		sourceURL: strings.Join(cfg.SourceURLs, "\n"), outFile: outFile,
+		nsbFallbackPort: cfg.FallbackPort, speedTest: cfg.SpeedTest, speedURL: cfg.SpeedURL,
+		lossMax: cfg.LossMax, enableTLS: cfg.EnableTLS, compactNSB: cfg.Compact,
+		nsbIPType: "all", nsbQualified: true, nsbDC: cfg.TargetDC,
+		nsbSpeedMin: cfg.SpeedMin, nsbSpeedLimit: cfg.SpeedLimit,
+		showProgress: false, noColor: true,
+		export: cliExportConfig{
+			Format: cfg.Format, Fields: "compact", GitHub: true, GitHubSet: true,
+			GHRepo: cfg.GitHubRepo, GHBranch: cfg.GitHubBranch, GHPath: cfg.GitHubPath,
+			GHMessage: cfg.GitHubMessage, GHToken: strings.TrimSpace(string(tokenBytes)),
+		},
+	}
+	return runNSBCLI(cliCfg)
 }

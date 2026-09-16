@@ -253,6 +253,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if params.SpeedMin < 0 {
 				params.SpeedMin = 0
 			}
+			if params.LossMax < 0 || params.LossMax > 100 {
+				session.sendWSMessage("error", "最大丢包率必须在 0-100 之间")
+				return
+			}
 			if strings.TrimSpace(params.SpeedURL) == "" {
 				params.SpeedURL = speedTestURL
 			}
@@ -266,9 +270,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if hasSourceURL {
-				parsedURL, err := url.Parse(params.SourceURL)
-				if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
-					session.sendWSMessage("error", "网络URL必须是有效的 http/https 地址")
+				if _, err := parseNetworkSourceURLs(params.SourceURL); err != nil {
+					session.sendWSMessage("error", "网络 URL 配置无效: "+err.Error())
 					return
 				}
 			}
@@ -280,8 +283,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				fileName := params.FileName
 				fileContent := params.FileContent
 				if hasSourceURL {
-					session.sendWSMessage("log", "正在获取非标网络输入: "+params.SourceURL)
-					content, err := getURLContentWithContext(ctx, params.SourceURL)
+					urls, _ := parseNetworkSourceURLs(params.SourceURL)
+					session.sendWSMessage("log", fmt.Sprintf("正在并发获取 %d 个非标网络输入", len(urls)))
+					content, sourceName, err := fetchNetworkSourceURLs(ctx, params.SourceURL)
 					if err != nil {
 						if ctx.Err() != nil {
 							return
@@ -289,10 +293,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 						session.sendWSMessage("error", "获取非标网络输入失败: "+err.Error())
 						return
 					}
-					fileName = params.SourceURL
+					fileName = sourceName
 					fileContent = content
 				}
-				runNSBTask(ctx, session, fileName, fileContent, params.OutFile, params.MaxThreads, params.FallbackPort, params.SpeedTest, params.SpeedURL, params.EnableTLS, params.Delay, params.ResultLimit, params.DC, params.SpeedMin, params.SpeedLimit, params.Compact, scanMode)
+				runNSBTask(ctx, session, fileName, fileContent, params.OutFile, params.MaxThreads, params.FallbackPort, params.SpeedTest, params.SpeedURL, params.EnableTLS, params.Delay, params.ResultLimit, params.DC, params.SpeedMin, params.LossMax, params.SpeedLimit, params.Compact, scanMode)
 			})
 		},
 		"start_nsb_speed_batch": func(data json.RawMessage) {
@@ -310,6 +314,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if params.SpeedMin <= 0 {
 				params.SpeedMin = 0.1
 			}
+			if params.LossMax < 0 || params.LossMax > 100 {
+				session.sendWSMessage("error", "最大丢包率必须在 0-100 之间")
+				return
+			}
 			if strings.TrimSpace(params.SpeedURL) == "" {
 				params.SpeedURL = speedTestURL
 			}
@@ -318,7 +326,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			session.startTaskNamed("非标批量测速", "nsb", map[string]interface{}{"speedTest": params.SpeedTest, "speedURL": params.SpeedURL, "enableTLS": params.EnableTLS, "speedMin": params.SpeedMin, "speedLimit": params.SpeedLimit, "skipTested": params.SkipTested, "compact": params.Compact}, func(ctx context.Context, session *appSession) {
-				runNSBSpeedBatch(ctx, session, params.Results, params.SpeedTest, params.SpeedURL, params.EnableTLS, params.SpeedMin, params.SpeedLimit, params.SkipTested, params.Compact)
+				runNSBSpeedBatch(ctx, session, params.Results, params.SpeedTest, params.SpeedURL, params.EnableTLS, params.SpeedMin, params.LossMax, params.SpeedLimit, params.SkipTested, params.Compact)
 			})
 		},
 		"stop_task": func(data json.RawMessage) {

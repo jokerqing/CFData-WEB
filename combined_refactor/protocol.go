@@ -8,18 +8,18 @@ type wsRequest struct {
 }
 
 type startTaskRequest struct {
-	IPType            int     `json:"ipType"`
-	Threads           int     `json:"threads"`
-	Port              int     `json:"port"`
-	Delay             int     `json:"delay"`
-	ScanMode          string  `json:"scanMode"`
-	AutoSpeed         bool    `json:"autoSpeed"`
-	OfficialTargetDC  string  `json:"officialTargetDC"`
-	OfficialSpeedPort int     `json:"officialSpeedPort"`
-	OfficialSpeedURL  string  `json:"officialSpeedURL"`
-	OfficialSpeedMin  float64 `json:"officialSpeedMin"`
-	OfficialLossMax   float64 `json:"officialLossMax"`
-	OfficialSpeedLimit int    `json:"officialSpeedLimit"`
+	IPType             int     `json:"ipType"`
+	Threads            int     `json:"threads"`
+	Port               int     `json:"port"`
+	Delay              int     `json:"delay"`
+	ScanMode           string  `json:"scanMode"`
+	AutoSpeed          bool    `json:"autoSpeed"`
+	OfficialTargetDC   string  `json:"officialTargetDC"`
+	OfficialSpeedPort  int     `json:"officialSpeedPort"`
+	OfficialSpeedURL   string  `json:"officialSpeedURL"`
+	OfficialSpeedMin   float64 `json:"officialSpeedMin"`
+	OfficialLossMax    float64 `json:"officialLossMax"`
+	OfficialSpeedLimit int     `json:"officialSpeedLimit"`
 }
 
 type startTestRequest struct {
@@ -59,6 +59,7 @@ type startNSBTaskRequest struct {
 	ResultLimit  int     `json:"resultLimit"`
 	DC           string  `json:"dc"`
 	SpeedMin     float64 `json:"speedMin"`
+	LossMax      float64 `json:"lossMax"`
 	SpeedLimit   int     `json:"speedLimit"`
 	Compact      bool    `json:"compact"`
 	ScanMode     string  `json:"scanMode"`
@@ -70,6 +71,7 @@ type startNSBSpeedBatchRequest struct {
 	SpeedURL   string           `json:"speedURL"`
 	EnableTLS  bool             `json:"enableTLS"`
 	SpeedMin   float64          `json:"speedMin"`
+	LossMax    float64          `json:"lossMax"`
 	SpeedLimit int              `json:"speedLimit"`
 	SkipTested bool             `json:"skipTested"`
 	Compact    bool             `json:"compact"`

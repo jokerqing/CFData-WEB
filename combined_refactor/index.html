@@ -369,7 +369,8 @@
         }
 
         .option-item input,
-        .option-item select {
+        .option-item select,
+        .option-item textarea {
             flex: 1;
             min-width: 0;
             box-sizing: border-box;
@@ -432,7 +433,8 @@
         }
 
         input,
-        select {
+        select,
+        textarea {
             border: 1px solid var(--border-color);
             border-radius: 10px;
             background: var(--bg-color);
@@ -443,6 +445,11 @@
             line-height: 20px;
             max-width: 100%;
             min-width: 0;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 96px;
         }
 
         select {
@@ -1565,6 +1572,7 @@
 
             .option-item input,
             .option-item select,
+            .option-item textarea,
             .option-item .field-with-action {
                 width: 100%;
             }
@@ -1796,8 +1804,8 @@
                 <div class="option-item full-width">
                     <span class="label">📅 计划操作</span>
                     <div class="field-with-action">
-                        <button class="mini-action-btn" onclick="saveScheduleConfiguration(false)" title="保存定时任务">💾 保存</button>
-                        <button class="mini-action-btn" onclick="saveScheduleConfiguration(true)" title="保存后立即测试一次">▶ 立即运行</button>
+                        <button class="mini-action-btn" onclick="saveScheduleConfiguration(false, 'official')" title="保存定时任务">💾 保存</button>
+                        <button class="mini-action-btn" onclick="saveScheduleConfiguration(true, 'official')" title="保存后立即测试一次">▶ 立即运行</button>
                         <input id="scheduleStatus" type="text" value="正在读取定时任务状态" readonly style="flex:1;min-width:0;">
                     </div>
                 </div>
@@ -1815,9 +1823,9 @@
                         onchange="syncNSBInputMode('file')">
                 </div>
                 <div class="option-item full-width">
-                    <span class="label" title="从网络地址获取 IP 列表">🌐 网络 URL</span>
-                    <input id="nsbSourceUrl" type="url" placeholder="https://example.com/ip-list.txt"
-                        oninput="syncNSBInputMode('url')">
+                    <span class="label" title="每行一个 URL；以 # 开头的行会被忽略">🌐 网络 URL</span>
+                    <textarea id="nsbSourceUrl" rows="4" placeholder="https://example.com/ip-list-a.txt&#10;https://example.com/ip-list-b.txt&#10;# https://example.com/disabled.txt"
+                        oninput="syncNSBInputMode('url')"></textarea>
                 </div>
                 <div class="option-item">
                     <span class="label" title="未指定端口时使用的默认端口">🚪 备用端口</span>
@@ -1909,6 +1917,25 @@
                 <div class="option-item full-width">
                     <span class="label">⬆ 自动上传</span>
                     <select id="nsbAutoUploadAccount" onchange="saveAutoUploadPreference('nsb', this.value)"></select>
+                </div>
+                <div class="option-item">
+                    <span class="label" title="由服务端定时执行，页面关闭后仍生效">🕑 定时运行</span>
+                    <select id="nsbScheduleEnabled">
+                        <option value="on" selected>开启</option>
+                        <option value="off">关闭</option>
+                    </select>
+                </div>
+                <div class="option-item">
+                    <span class="label" title="北京时间，多个时间用英文逗号分隔">⏰ 执行时间</span>
+                    <input id="nsbScheduleTimes" type="text" value="02:00,14:00" placeholder="02:00,14:00">
+                </div>
+                <div class="option-item full-width">
+                    <span class="label">📅 非标计划</span>
+                    <div class="field-with-action">
+                        <button class="mini-action-btn" onclick="saveScheduleConfiguration(false, 'nsb')" title="保存非标定时任务">💾 保存</button>
+                        <button class="mini-action-btn" onclick="saveScheduleConfiguration(true, 'nsb')" title="保存后立即测试一次">▶ 立即运行</button>
+                        <input id="nsbScheduleStatus" type="text" value="正在读取定时任务状态" readonly style="flex:1;min-width:0;">
+                    </div>
                 </div>
             </div>
 
@@ -2502,9 +2529,15 @@
             reader.readAsText(file);
         });
 
+        function activeNSBSourceURLs(rawValue) {
+            return String(rawValue || '').split(/\r?\n/)
+                .map((value) => value.trim())
+                .filter((value) => value && !value.startsWith('#'));
+        }
+
         function syncNSBInputMode(preferred) {
             const hasFile = !!(fileInput && fileInput.files && fileInput.files.length);
-            const hasURL = !!(nsbSourceUrlInput && nsbSourceUrlInput.value.trim());
+            const hasURL = activeNSBSourceURLs(nsbSourceUrlInput?.value).length > 0;
             if (preferred === 'file' && hasFile && nsbSourceUrlInput) {
                 nsbSourceUrlInput.value = '';
             } else if (preferred === 'url' && hasURL && fileInput) {
@@ -4577,7 +4610,7 @@
             resetProgress();
             progressBox.style.display = 'block';
             updateNSBSpeedButtons();
-            if (!wsSend({ type: 'start_nsb_speed_batch', data: { results: rows, speedTest: cfg.speedTest, speedURL: cfg.speedURL, enableTLS: cfg.enableTLS, speedMin: cfg.speedMin, speedLimit: cfg.speedLimit, skipTested: continued, compact: nsbCompactView } })) {
+            if (!wsSend({ type: 'start_nsb_speed_batch', data: { results: rows, speedTest: cfg.speedTest, speedURL: cfg.speedURL, enableTLS: cfg.enableTLS, speedMin: cfg.speedMin, lossMax: cfg.lossMax, speedLimit: cfg.speedLimit, skipTested: continued, compact: nsbCompactView } })) {
                 nsbBatchSpeedRunning = false;
                 finishRunningTask('✨ 开始扫描与测试');
                 updateNSBSpeedButtons();
@@ -4763,8 +4796,9 @@
         function startNSBTask() {
             syncNSBInputMode();
             const sourceURL = nsbSourceUrlInput ? nsbSourceUrlInput.value.trim() : '';
+            const sourceURLs = activeNSBSourceURLs(sourceURL);
             const hasFile = !!uploadedFileContent.trim();
-            const hasURL = !!sourceURL;
+            const hasURL = sourceURLs.length > 0;
             if (hasFile === hasURL) {
                 showNoticeCard('请选择本地文件或填写网络 URL（二选一）');
                 return;
@@ -4851,6 +4885,7 @@
                     resultLimit,
                     dc: targetDC,
                     speedMin,
+                    lossMax,
                     speedLimit,
                     compact,
                     scanMode: getScanMode(),
@@ -5982,27 +6017,54 @@
 
         function applyScheduleStatus(data) {
             const cfg = data?.config || {};
-            const enabled = document.getElementById('scheduleEnabled');
-            const times = document.getElementById('scheduleTimes');
-            const status = document.getElementById('scheduleStatus');
-            if (enabled) enabled.value = cfg.enabled ? 'on' : 'off';
-            if (times && Array.isArray(cfg.times) && cfg.times.length) times.value = cfg.times.join(',');
+            const scheduleMode = cfg.mode === 'nsb' ? 'nsb' : 'official';
+            [['scheduleEnabled', 'scheduleTimes'], ['nsbScheduleEnabled', 'nsbScheduleTimes']].forEach(([enabledId, timesId]) => {
+                const enabled = document.getElementById(enabledId);
+                const times = document.getElementById(timesId);
+                if (enabled) enabled.value = cfg.enabled ? 'on' : 'off';
+                if (times && Array.isArray(cfg.times) && cfg.times.length) times.value = cfg.times.join(',');
+            });
             if (cfg.githubRepo) {
                 const idx = getGitHubAccounts().findIndex((account) => account.repo === cfg.githubRepo);
-                const select = document.getElementById('officialAutoUploadAccount');
+                const selectId = scheduleMode === 'nsb' ? 'nsbAutoUploadAccount' : 'officialAutoUploadAccount';
+                const select = document.getElementById(selectId);
                 if (select && idx >= 0) select.value = `${idx}:${cfg.format || 'txt'}`;
             }
-            if (status) {
-                const state = data?.running ? '运行中' : (cfg.enabled ? '已启用' : '已停用');
-                const next = data?.nextRun ? `，下次 ${data.nextRun}` : '';
-                const lastError = data?.lastError ? `，错误：${data.lastError}` : '';
-                status.value = `${state}${next}${lastError}`;
-                status.title = status.value;
+            if (scheduleMode === 'nsb') {
+                if (Array.isArray(cfg.sourceURLs)) setValue('nsbSourceUrl', cfg.sourceURLs.join('\n'));
+                setValue('nsbThreads', cfg.threads);
+                setValue('nsbFallbackPort', cfg.fallbackPort);
+                setValue('nsbDelay', cfg.delay);
+                setValue('nsbResultLimit', cfg.resultLimit);
+                setValue('nsbSpeedMin', cfg.speedMin);
+                setValue('nsbLossMax', cfg.lossMax ?? 0);
+                setValue('nsbSpeedLimit', cfg.speedLimit);
+                setValue('nsbSpeedTest', cfg.speedTest);
+                setValue('nsbEnableSpeed', cfg.speedTest > 0 ? 'on' : 'off');
+                setValue('nsbTargetDC', cfg.targetDC);
+                setValue('nsbTls', cfg.enableTLS ? 'on' : 'off');
+                setValue('nsbCompactView', cfg.compact ? 'compact' : 'full');
+                if (cfg.speedURL) applySpeedUrlConfig('nsbSpeedUrl', 'nsbSpeedUrlPreset', cfg.speedURL);
+                updateNSBSpeedControls();
             }
+            const state = data?.running ? '运行中' : (cfg.enabled ? '已启用' : '已停用');
+            const next = data?.nextRun ? `，下次 ${data.nextRun}` : '';
+            const lastError = data?.lastError ? `，错误：${data.lastError}` : '';
+            const modeLabel = scheduleMode === 'nsb' ? '非标优选' : '官方优选';
+            ['scheduleStatus', 'nsbScheduleStatus'].forEach((statusId) => {
+                const status = document.getElementById(statusId);
+                if (!status) return;
+                status.value = `${modeLabel}：${state}${next}${lastError}`;
+                status.title = status.value;
+            });
         }
 
-        async function saveScheduleConfiguration(runNow) {
-            const selection = document.getElementById('officialAutoUploadAccount')?.value || '';
+        async function saveScheduleConfiguration(runNow, requestedMode = currentMode) {
+            const scheduleMode = requestedMode === 'nsb' ? 'nsb' : 'official';
+            const accountSelectId = scheduleMode === 'nsb' ? 'nsbAutoUploadAccount' : 'officialAutoUploadAccount';
+            const enabledId = scheduleMode === 'nsb' ? 'nsbScheduleEnabled' : 'scheduleEnabled';
+            const timesId = scheduleMode === 'nsb' ? 'nsbScheduleTimes' : 'scheduleTimes';
+            const selection = document.getElementById(accountSelectId)?.value || '';
             const [idxText, selectedFormat] = selection.split(':');
             const idx = parseInt(idxText, 10);
             const account = getGitHubAccounts()[idx];
@@ -6014,38 +6076,76 @@
             let token = githubSessionTokens.get(accountKey) || '';
             if (!token && account.token) token = await migrateLegacyGitHubToken(account, idx);
             if (!token && account.tokenCipher) token = await decryptStoredGitHubToken(account);
-            const enabled = document.getElementById('scheduleEnabled')?.value === 'on';
+            const enabled = document.getElementById(enabledId)?.value === 'on';
             if (enabled && !token) {
                 showNoticeCard('无法读取该账户的 Token，请在结果操作中重新保存 GitHub 账户与 Token');
                 return;
             }
-            const times = String(document.getElementById('scheduleTimes')?.value || '02:00,14:00')
+            const times = String(document.getElementById(timesId)?.value || '02:00,14:00')
                 .split(',').map((value) => value.trim()).filter(Boolean);
-            const speed = syncOfficialSpeedConfigState();
             const format = selectedFormat === 'csv' ? 'csv' : 'txt';
             const config = {
-                enabled, times, timezone: 'Asia/Shanghai',
-                ipType: parseInt(document.getElementById('officialIpType')?.value || '4', 10) || 4,
-                threads: parseInt(document.getElementById('officialThreads')?.value || '100', 10) || 100,
-                port: speed.port,
-                delay: parseInt(document.getElementById('officialDelay')?.value || '500', 10) || 0,
-                scanMode: getScanMode(), speedMin: speed.speedMin, speedLimit: speed.speedLimit,
-                lossMax: speed.lossMax, speedURL: speed.url,
-                targetDC: document.getElementById('officialTargetDC')?.value?.trim() || '',
+                enabled, times, timezone: 'Asia/Shanghai', mode: scheduleMode,
                 format, githubRepo: account.repo, githubBranch: account.branch || 'main',
                 githubPath: (account.path || `results/ip.${format}`).replace(/\.(csv|txt)$/i, `.${format}`),
                 githubMessage: account.message || 'scheduled cfdata qualified results',
             };
+
+            if (scheduleMode === 'nsb') {
+                const sourceURLs = activeNSBSourceURLs(nsbSourceUrlInput?.value);
+                if (!sourceURLs.length) {
+                    showNoticeCard('非标定时任务需要至少一个有效的网络 URL；注释行不会参与测试');
+                    return;
+                }
+                for (const [index, value] of sourceURLs.entries()) {
+                    try {
+                        const parsed = new URL(value);
+                        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('scheme');
+                    } catch (_) {
+                        showNoticeCard(`网络 URL 第 ${index + 1} 行不是有效的 http/https 地址`);
+                        return;
+                    }
+                }
+                const speed = syncNSBSpeedConfigState();
+                const speedEnabled = String(document.getElementById('nsbEnableSpeed')?.value || 'off').toLowerCase() === 'on';
+                if (!speedEnabled || speed.speedTest <= 0 || speed.speedLimit <= 0) {
+                    showNoticeCard('非标定时上传合格结果需要开启自动测速，并设置大于 0 的测速并发和结果数量');
+                    return;
+                }
+                const enableTLS = String(document.getElementById('nsbTls')?.value || 'on').toLowerCase() !== 'off';
+                Object.assign(config, {
+                    sourceURLs,
+                    threads: parseInt(document.getElementById('nsbThreads')?.value || '100', 10) || 100,
+                    fallbackPort: parseInt(document.getElementById('nsbFallbackPort')?.value || (enableTLS ? '443' : '80'), 10),
+                    delay: parseInt(document.getElementById('nsbDelay')?.value || '0', 10) || 0,
+                    scanMode: getScanMode(), speedMin: speed.speedMin, lossMax: speed.lossMax,
+                    speedLimit: speed.speedLimit, speedTest: speed.speedTest, speedURL: speed.speedURL,
+                    enableTLS,
+                    resultLimit: parseInt(document.getElementById('nsbResultLimit')?.value || '1000', 10) || 0,
+                    targetDC: document.getElementById('nsbTargetDC')?.value?.trim() || '',
+                    compact: document.getElementById('nsbCompactView')?.value !== 'full',
+                });
+            } else {
+                const speed = syncOfficialSpeedConfigState();
+                Object.assign(config, {
+                    ipType: parseInt(document.getElementById('officialIpType')?.value || '4', 10) || 4,
+                    threads: parseInt(document.getElementById('officialThreads')?.value || '100', 10) || 100,
+                    port: speed.port,
+                    delay: parseInt(document.getElementById('officialDelay')?.value || '500', 10) || 0,
+                    scanMode: getScanMode(), speedMin: speed.speedMin, speedLimit: speed.speedLimit,
+                    lossMax: speed.lossMax, speedURL: speed.url,
+                    targetDC: document.getElementById('officialTargetDC')?.value?.trim() || '',
+                });
+            }
             if (!wsSend({ type: 'save_schedule', data: { config, token } })) {
                 showNoticeCard('连接未就绪，请等待重连后再试');
                 return;
             }
-            saveAutoUploadPreference('official', selection);
+            saveAutoUploadPreference(scheduleMode, selection);
             if (runNow) {
                 window.setTimeout(() => wsSend({ type: 'run_schedule_now', data: {} }), 250);
             }
         }
-
         async function autoUploadNSBResults() {
             const value = document.getElementById('nsbAutoUploadAccount')?.value || '';
             await autoUploadResults(value, 'nsb', '自动上传已提交');

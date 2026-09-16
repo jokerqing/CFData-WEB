@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1251,12 +1250,7 @@ func runNSBCLI(cfg *cliConfig) error {
 			return err
 		}
 	} else {
-		parsedURL, parseErr := url.Parse(cfg.sourceURL)
-		if parseErr != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
-			return errors.New("-nsbsourceurl 必须是有效的 http/https 地址")
-		}
-		inputName = cfg.sourceURL
-		content, err = getURLContent(cfg.sourceURL)
+		content, inputName, err = fetchNetworkSourceURLs(context.Background(), cfg.sourceURL)
 		if err != nil {
 			return fmt.Errorf("获取非标网络输入失败: %w", err)
 		}
@@ -1268,7 +1262,7 @@ func runNSBCLI(cfg *cliConfig) error {
 		if scanMode == "" {
 			scanMode = scanModeTCPing
 		}
-		runNSBTask(ctx, session, inputName, content, cfg.outFile, cfg.threads, cfg.nsbFallbackPort, cfg.speedTest, speedTestURL, cfg.enableTLS, cfg.delay, cfg.resultLimit, cfg.nsbDC, cfg.nsbSpeedMin, cfg.nsbSpeedLimit, cfg.compactNSB, scanMode)
+		runNSBTask(ctx, session, inputName, content, cfg.outFile, cfg.threads, cfg.nsbFallbackPort, cfg.speedTest, firstNonEmpty(cfg.speedURL, speedTestURL), cfg.enableTLS, cfg.delay, cfg.resultLimit, cfg.nsbDC, cfg.nsbSpeedMin, cfg.lossMax, cfg.nsbSpeedLimit, cfg.compactNSB, scanMode)
 	}); err != nil {
 		return cliTaskError(err)
 	}
@@ -1276,7 +1270,7 @@ func runNSBCLI(cfg *cliConfig) error {
 	rows := nsbPayloadRows(session.nsbHeaders, session.nsbRows)
 	session.nsbMutex.Unlock()
 	rows = filterCLIResultRowsByIPType(rows, cfg.nsbIPType)
-	rows = filterCLIResultRowsByQualification(rows, cfg.nsbQualified, cfg.speedTest > 0 && cfg.nsbSpeedLimit > 0, cfg.nsbSpeedMin)
+	rows = filterCLIResultRowsByQualification(rows, cfg.nsbQualified, cfg.speedTest > 0 && cfg.nsbSpeedLimit > 0, cfg.nsbSpeedMin, cfg.lossMax)
 	if len(rows) == 0 {
 		fmt.Printf("%s[nsb]%s 没有符合导出条件的结果\n", ansiYellow, ansiReset)
 		return nil
@@ -2038,15 +2032,20 @@ func filterCLIResultRowsByIPType(rows []cliResultRow, filter string) []cliResult
 	return filtered
 }
 
-func filterCLIResultRowsByQualification(rows []cliResultRow, onlyQualified bool, speedEnabled bool, speedMin float64) []cliResultRow {
-	if !onlyQualified || !speedEnabled {
+func filterCLIResultRowsByQualification(rows []cliResultRow, onlyQualified bool, speedEnabled bool, speedMin, lossMaxPercent float64) []cliResultRow {
+	if !onlyQualified {
 		return rows
 	}
 	filtered := make([]cliResultRow, 0, len(rows))
 	for _, row := range rows {
-		if nsbRowQualified(row["speed"], speedMin) {
-			filtered = append(filtered, row)
+		if speedEnabled && !nsbRowQualified(row["speed"], speedMin) {
+			continue
 		}
+		lossText := strings.TrimSpace(row["lossRate"])
+		if lossText == "" || !lossRateWithinLimit(parsePercent(lossText), lossMaxPercent) {
+			continue
+		}
+		filtered = append(filtered, row)
 	}
 	return filtered
 }
