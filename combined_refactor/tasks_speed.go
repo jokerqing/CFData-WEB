@@ -162,7 +162,7 @@ func isSpeedRateLimited(speedErr string) bool {
 	return strings.Contains(speedErr, "速率限制")
 }
 
-func runOfficialSpeedTestsCore(ctx context.Context, results []TestResult, port int, limit int, speedMinMB float64, customURL string, onResult func(current, total, qualified int, result TestResult), onRateLimited func()) ([]TestResult, []TestResult) {
+func runOfficialSpeedTestsCore(ctx context.Context, results []TestResult, port int, limit int, speedMinMB float64, lossMaxPercent float64, customURL string, onResult func(current, total, qualified int, result TestResult), onRateLimited func()) ([]TestResult, []TestResult) {
 	capacity := len(results)
 	if limit > 0 && limit < capacity {
 		capacity = limit
@@ -197,7 +197,7 @@ func runOfficialSpeedTestsCore(ctx context.Context, results []TestResult, port i
 		} else {
 			consecutiveRateLimited = 0
 			results[i].Speed = fmt.Sprintf("%.2fMB/s", speedMB)
-			if speedMB >= speedMinMB {
+			if speedMB >= speedMinMB && lossRateWithinLimit(results[i].LossRate, lossMaxPercent) {
 				qualified = append(qualified, results[i])
 			}
 		}
@@ -220,7 +220,7 @@ func runOfficialSpeedTestsCore(ctx context.Context, results []TestResult, port i
 	return results, qualified
 }
 
-func runOfficialSpeedBatch(ctx context.Context, session *appSession, port int, customURL string, speedLimit int, speedMin float64, fallbackResults []TestResult, skipTested bool) {
+func runOfficialSpeedBatch(ctx context.Context, session *appSession, port int, customURL string, speedLimit int, speedMin float64, lossMaxPercent float64, fallbackResults []TestResult, skipTested bool) {
 	if port <= 0 {
 		port = 443
 	}
@@ -264,10 +264,10 @@ func runOfficialSpeedBatch(ctx context.Context, session *appSession, port int, c
 	}
 	sortOfficialTestResults(results)
 
-	session.sendWSMessage("log", fmt.Sprintf("开始测速：%d 条记录，目标上限=%d，测速阈值=%.2fMB/s", len(results), speedLimit, speedMin))
+	session.sendWSMessage("log", fmt.Sprintf("开始测速：%d 条记录，目标上限=%d，测速阈值=%.2fMB/s，最大丢包率=%.2f%%", len(results), speedLimit, speedMin, lossMaxPercent))
 	session.sendWSMessage("official_speed_progress", map[string]interface{}{"current": 0, "total": len(results), "qualified": 0, "limit": speedLimit})
 	rateLimited := false
-	updated, qualified := runOfficialSpeedTestsCore(ctx, results, port, speedLimit, speedMin, customURL, func(current, total, qualified int, result TestResult) {
+	updated, qualified := runOfficialSpeedTestsCore(ctx, results, port, speedLimit, speedMin, lossMaxPercent, customURL, func(current, total, qualified int, result TestResult) {
 		session.sendWSMessage("speed_test_result", map[string]string{"ip": result.IP, "speed": result.Speed})
 		session.sendWSMessage("official_speed_progress", map[string]interface{}{"current": current, "total": total, "qualified": qualified, "limit": speedLimit})
 	}, func() {
@@ -285,7 +285,7 @@ func runOfficialSpeedBatch(ctx context.Context, session *appSession, port int, c
 			session.testResults[idx].Speed = speed
 		}
 	}
-	totalQualified := countOfficialQualifiedResults(session.testResults, speedMin)
+	totalQualified := countOfficialQualifiedResults(session.testResults, speedMin, lossMaxPercent)
 	session.testMutex.Unlock()
 	if ctx.Err() != nil {
 		session.sendWSMessage("log", "官方批量测速已终止")
@@ -299,10 +299,17 @@ func runOfficialSpeedBatch(ctx context.Context, session *appSession, port int, c
 	}
 }
 
-func countOfficialQualifiedResults(results []TestResult, speedMin float64) int {
+func lossRateWithinLimit(lossRate float64, lossMaxPercent float64) bool {
+	if lossMaxPercent < 0 {
+		lossMaxPercent = 0
+	}
+	return lossRate*100 <= lossMaxPercent+1e-9
+}
+
+func countOfficialQualifiedResults(results []TestResult, speedMin float64, lossMaxPercent float64) int {
 	count := 0
 	for _, result := range results {
-		if speed, ok := parseSpeedMBForSort(result.Speed); ok && speed >= speedMin {
+		if speed, ok := parseSpeedMBForSort(result.Speed); ok && speed >= speedMin && lossRateWithinLimit(result.LossRate, lossMaxPercent) {
 			count++
 		}
 	}

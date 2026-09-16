@@ -214,6 +214,8 @@ func main() {
 		return
 	}
 
+	startScheduler()
+
 	http.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			handleLoginPost(w, r)

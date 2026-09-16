@@ -19,34 +19,37 @@ import (
 )
 
 type cliConfig struct {
-	enabled         bool
-	configResolved  bool
-	mode            string
-	scanMode        string
-	ipType          int
-	threads         int
-	port            int
-	delay           int
-	resultLimit     int
-	dc              string
-	file            string
-	sourceURL       string
-	outFile         string
-	nsbFallbackPort int
-	speedTest       int
-	speedLimit      int
-	speedMin        float64
-	enableTLS       bool
-	compactNSB      bool
-	nsbIPType       string
-	nsbQualified    bool
-	nsbDC           string
-	nsbSpeedMin     float64
-	nsbSpeedLimit   int
-	showProgress    bool
-	noColor         bool
-	compactIPv4     bool
-	export          cliExportConfig
+	enabled           bool
+	configResolved    bool
+	mode              string
+	scanMode          string
+	ipType            int
+	threads           int
+	port              int
+	delay             int
+	resultLimit       int
+	dc                string
+	file              string
+	sourceURL         string
+	outFile           string
+	nsbFallbackPort   int
+	speedTest         int
+	speedLimit        int
+	speedMin          float64
+	speedURL          string
+	lossMax           float64
+	officialQualified bool
+	enableTLS         bool
+	compactNSB        bool
+	nsbIPType         string
+	nsbQualified      bool
+	nsbDC             string
+	nsbSpeedMin       float64
+	nsbSpeedLimit     int
+	showProgress      bool
+	noColor           bool
+	compactIPv4       bool
+	export            cliExportConfig
 }
 
 type cliExportConfig struct {
@@ -1143,6 +1146,9 @@ func runOfficialCLI(cfg *cliConfig) error {
 	if cfg.speedMin <= 0 {
 		cfg.speedMin = 0.1
 	}
+	if cfg.lossMax < 0 {
+		cfg.lossMax = 0
+	}
 
 	scanMode := cfg.scanMode
 	if scanMode == "" {
@@ -1192,10 +1198,16 @@ func runOfficialCLI(cfg *cliConfig) error {
 	} else {
 		sortOfficialTestResults(results)
 		setCLIProgress(session, "speed", 0, cfg.speedLimit)
-		fmt.Printf("%s[official]%s 开始测速：目标上限=%d，测速阈值=%.2fMB/s\n", ansiGreen, ansiReset, cfg.speedLimit, cfg.speedMin)
-		results = runOfficialSpeedTests(context.Background(), session, results, cfg.port, cfg.speedLimit, cfg.speedMin)
+		fmt.Printf("%s[official]%s 开始测速：目标上限=%d，测速阈值=%.2fMB/s，最大丢包率=%.2f%%\n", ansiGreen, ansiReset, cfg.speedLimit, cfg.speedMin, cfg.lossMax)
+		results = runOfficialSpeedTests(context.Background(), session, results, cfg.port, cfg.speedLimit, cfg.speedMin, cfg.lossMax, firstNonEmpty(cfg.speedURL, speedTestURL))
 	}
-	return writeCLIExportAndMaybeUpload(cfg, officialResultRows(scanResults, results, scanMode), "official")
+	rows := officialResultRows(scanResults, results, scanMode)
+	rows = filterOfficialCLIResultRows(rows, cfg.officialQualified, cfg.speedLimit > 0, cfg.speedMin, cfg.lossMax)
+	if len(rows) == 0 {
+		fmt.Printf("%s[official]%s 没有符合速度与丢包率条件的结果\n", ansiYellow, ansiReset)
+		return nil
+	}
+	return writeCLIExportAndMaybeUpload(cfg, rows, "official")
 }
 
 func runNSBCLI(cfg *cliConfig) error {
@@ -1302,11 +1314,11 @@ func pickBestDataCenter(scanResults []ScanResult) string {
 	return items[0].dc
 }
 
-func runOfficialSpeedTests(ctx context.Context, session *appSession, results []TestResult, port int, limit int, speedMinMB float64) []TestResult {
-	updated, _ := runOfficialSpeedTestsCore(ctx, results, port, limit, speedMinMB, speedTestURL, func(current, total, qualifiedCount int, result TestResult) {
+func runOfficialSpeedTests(ctx context.Context, session *appSession, results []TestResult, port int, limit int, speedMinMB float64, lossMaxPercent float64, customURL string) []TestResult {
+	updated, _ := runOfficialSpeedTestsCore(ctx, results, port, limit, speedMinMB, lossMaxPercent, customURL, func(current, total, qualifiedCount int, result TestResult) {
 		setCLIProgress(session, "speed", min(qualifiedCount, limit), limit)
 		fmt.Printf("%s[speed]%s %s %s:%d %s\n", ansiMagenta, ansiReset, renderCLIProgress(session, "speed"), result.IP, port, colorizeSpeedString(result.Speed))
-		if speedMB, ok := parseSpeedMBForSort(result.Speed); ok && speedMB >= speedMinMB {
+		if speedMB, ok := parseSpeedMBForSort(result.Speed); ok && speedMB >= speedMinMB && lossRateWithinLimit(result.LossRate, lossMaxPercent) {
 			fmt.Printf("%s[official]%s 达标 %d/%d\n", ansiGreen, ansiReset, qualifiedCount, limit)
 		}
 	}, func() {
@@ -1923,7 +1935,7 @@ func officialResultRows(scanResults []ScanResult, testResults []TestResult, scan
 		if port == 0 {
 			port = res.Port
 		}
-		rows = append(rows, cliResultRow{"ip": res.IP, "port": strconv.Itoa(port), "ipport": fmt.Sprintf("%s:%d", res.IP, port), "dc": scan.DataCenter, "dcCountry": scan.DCCountry, "region": scan.Region, "city": scan.City, "latency": fmt.Sprintf("%dms", res.AvgLatency/time.Millisecond), "speed": res.Speed, "scanMode": modeLabel})
+		rows = append(rows, cliResultRow{"ip": res.IP, "port": strconv.Itoa(port), "ipport": fmt.Sprintf("%s:%d", res.IP, port), "dc": scan.DataCenter, "dcCountry": scan.DCCountry, "region": scan.Region, "city": scan.City, "latency": fmt.Sprintf("%dms", res.AvgLatency/time.Millisecond), "lossRate": fmt.Sprintf("%.2f%%", res.LossRate*100), "speed": res.Speed, "scanMode": modeLabel})
 		if rows[len(rows)-1]["dc"] == "" {
 			rows[len(rows)-1]["dc"] = res.DataCenter
 			rows[len(rows)-1]["dcCountry"] = res.DCCountry
@@ -1935,6 +1947,26 @@ func officialResultRows(scanResults []ScanResult, testResults []TestResult, scan
 	return rows
 }
 
+func filterOfficialCLIResultRows(rows []cliResultRow, onlyQualified bool, speedEnabled bool, speedMin float64, lossMaxPercent float64) []cliResultRow {
+	if !onlyQualified {
+		return rows
+	}
+	filtered := make([]cliResultRow, 0, len(rows))
+	for _, row := range rows {
+		if speedEnabled {
+			speed, ok := parseSpeedMBForSort(row["speed"])
+			if !ok || speed < speedMin {
+				continue
+			}
+		}
+		lossText := strings.TrimSpace(row["lossRate"])
+		if lossText == "" || !lossRateWithinLimit(parsePercent(lossText), lossMaxPercent) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	return filtered
+}
 func sortOfficialRows(rows []cliResultRow) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		speedI, okI := parseSpeedMBForSort(rows[i]["speed"])

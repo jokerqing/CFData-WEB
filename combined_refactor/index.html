@@ -1725,6 +1725,10 @@
                     <input id="officialSpeedMin" type="number" value="0.1" step="0.01" placeholder="默认 0.1MB/s" oninput="syncOfficialSpeedConfigState()">
                 </div>
                 <div class="option-item">
+                    <span class="label" title="合格结果允许的最大丢包率，0 表示不允许丢包">📦 最大丢包率</span>
+                    <input id="officialLossMax" type="number" value="0" min="0" max="100" step="0.1" placeholder="默认 0%" oninput="syncOfficialSpeedConfigState()">
+                </div>
+                <div class="option-item">
                     <span class="label" title="测速达标结果的最大数量，关闭测速填 0">🏁 测速结果数量</span>
                     <input id="officialSpeedLimit" type="number" value="5" placeholder="0 关闭测速">
                 </div>
@@ -1776,7 +1780,26 @@
                 </div>
                 <div class="option-item full-width">
                     <span class="label">⬆ 自动上传</span>
-                    <select id="officialAutoUploadAccount"></select>
+                    <select id="officialAutoUploadAccount" onchange="saveAutoUploadPreference('official', this.value)"></select>
+                </div>
+                <div class="option-item">
+                    <span class="label" title="由服务端定时执行，页面关闭后仍生效">🕑 定时运行</span>
+                    <select id="scheduleEnabled">
+                        <option value="on" selected>开启</option>
+                        <option value="off">关闭</option>
+                    </select>
+                </div>
+                <div class="option-item">
+                    <span class="label" title="北京时间，多个时间用英文逗号分隔">⏰ 执行时间</span>
+                    <input id="scheduleTimes" type="text" value="02:00,14:00" placeholder="02:00,14:00">
+                </div>
+                <div class="option-item full-width">
+                    <span class="label">📅 计划操作</span>
+                    <div class="field-with-action">
+                        <button class="mini-action-btn" onclick="saveScheduleConfiguration(false)" title="保存定时任务">💾 保存</button>
+                        <button class="mini-action-btn" onclick="saveScheduleConfiguration(true)" title="保存后立即测试一次">▶ 立即运行</button>
+                        <input id="scheduleStatus" type="text" value="正在读取定时任务状态" readonly style="flex:1;min-width:0;">
+                    </div>
                 </div>
             </div>
 
@@ -1815,6 +1838,10 @@
                 <div class="option-item">
                     <span class="label" title="测速达标下限，单位 MB/s">📉 测试合格速度</span>
                     <input id="nsbSpeedMin" type="number" value="0.1" step="0.01" placeholder="默认 0.1MB/s" oninput="syncNSBSpeedConfigState()">
+                </div>
+                <div class="option-item">
+                    <span class="label" title="合格结果允许的最大丢包率，0 表示不允许丢包">📦 最大丢包率</span>
+                    <input id="nsbLossMax" type="number" value="0" min="0" max="100" step="0.1" placeholder="默认 0%" oninput="syncNSBSpeedConfigState()">
                 </div>
                 <div class="option-item">
                     <span class="label" title="测速达标结果的最大数量，关闭测速填 0">🏁 测速结果数量</span>
@@ -1881,7 +1908,7 @@
                 </div>
                 <div class="option-item full-width">
                     <span class="label">⬆ 自动上传</span>
-                    <select id="nsbAutoUploadAccount"></select>
+                    <select id="nsbAutoUploadAccount" onchange="saveAutoUploadPreference('nsb', this.value)"></select>
                 </div>
             </div>
 
@@ -2077,9 +2104,9 @@
                     </div>
                     <div class="modal-field" id="resultQualifiedFilterField">
                         <label>导出合格结果</label>
-                        <select id="resultQualifiedFilter" onchange="updateResultPreview()">
-                            <option value="all" selected>导出全部结果</option>
-                            <option value="qualified">仅导出合格</option>
+                        <select id="resultQualifiedFilter" onchange="savePreferredQualifiedFilter(this.value); updateResultPreview()">
+                            <option value="all">导出全部结果</option>
+                            <option value="qualified" selected>仅导出合格</option>
                             <option value="unqualified">仅导出不合格</option>
                         </select>
                     </div>
@@ -2239,9 +2266,9 @@
                     </div>
                     <div class="modal-field" id="copyQualifiedFilterField">
                         <label>复制合格结果</label>
-                        <select id="copyQualifiedFilter" onchange="updateCopyPreview()">
-                            <option value="all" selected>复制全部结果</option>
-                            <option value="qualified">仅复制合格</option>
+                        <select id="copyQualifiedFilter" onchange="savePreferredQualifiedFilter(this.value); updateCopyPreview()">
+                            <option value="all">复制全部结果</option>
+                            <option value="qualified" selected>仅复制合格</option>
                             <option value="unqualified">仅复制不合格</option>
                         </select>
                     </div>
@@ -2381,11 +2408,13 @@
         let nsbTableIPTypeFilter = 'all';
         let nsbTableQualifiedFilter = 'all';
         let nsbSpeedMinValue = 0;
+        let nsbLossMaxValue = 0;
         let nsbSpeedEnabledForResults = false;
         const AUTO_SPEED_URL_VALUE = 'auto';
         const AUTO_SPEED_URL_LABEL = '自动选择';
         let officialTestQualifiedFilter = 'all';
         let officialSpeedMinValue = 0.1;
+        let officialLossMaxValue = 0;
         let officialSpeedEnabledForResults = false;
         let officialAutoSpeedPending = false;
         let officialAutoStage = '';
@@ -2425,6 +2454,9 @@
         let autoUploadKeys = new Set();
         let noticeConfirmAction = null;
         const githubAccountStorageKey = 'cfdata-github-accounts';
+        const preferredQualifiedFilterStorageKey = 'cfdata-qualified-filter';
+        const officialAutoUploadStorageKey = 'cfdata-auto-upload-official';
+        const nsbAutoUploadStorageKey = 'cfdata-auto-upload-nsb';
         const githubSessionTokens = new Map();
         const githubTokenCryptoSalt = 'cfdata-github-token-v1';
         const edgetunnelAccountStorageKey = 'cfdata-edgetunnel-accounts';
@@ -2712,6 +2744,7 @@
                     threads: val('officialThreads'),
                     delay: val('officialDelay'),
                     speedMin: val('officialSpeedMin'),
+                    lossMax: val('officialLossMax'),
                     speedLimit: val('officialSpeedLimit'),
                     autoSpeed: selVal('officialAutoSpeed'),
                     targetDC: val('officialTargetDC'),
@@ -2724,6 +2757,7 @@
                     resultLimit: val('nsbResultLimit'),
                     fallbackPort: val('nsbFallbackPort'),
                     speedMin: val('nsbSpeedMin'),
+                    lossMax: val('nsbLossMax'),
                     speedLimit: val('nsbSpeedLimit'),
                     speedTest: val('nsbSpeedTest'),
                     enableSpeed: selVal('nsbEnableSpeed'),
@@ -2752,6 +2786,7 @@
             setValue('officialThreads', o.threads);
             setValue('officialDelay', o.delay);
             setValue('officialSpeedMin', o.speedMin);
+            setValue('officialLossMax', o.lossMax ?? 0);
             setValue('officialSpeedLimit', o.speedLimit);
             setValue('officialAutoSpeed', o.autoSpeed);
             setValue('officialTargetDC', o.targetDC);
@@ -2761,6 +2796,7 @@
             setValue('nsbResultLimit', n.resultLimit);
             setValue('nsbFallbackPort', n.fallbackPort);
             setValue('nsbSpeedMin', n.speedMin);
+            setValue('nsbLossMax', n.lossMax ?? 0);
             setValue('nsbSpeedLimit', n.speedLimit);
             setValue('nsbSpeedTest', n.speedTest);
             setValue('nsbEnableSpeed', n.enableSpeed);
@@ -3724,7 +3760,7 @@
             }
             if (continueBtn) {
                 continueBtn.style.display = visible ? 'inline-flex' : 'none';
-                continueBtn.disabled = disabled || !nsbContinueSpeedUnlocked || !rows.some((row) => getSpeedStatus(row.speed, isNSBSpeedQualified(row.speed)) === 'untested');
+                continueBtn.disabled = disabled || !nsbContinueSpeedUnlocked || !rows.some((row) => getSpeedStatus(row.speed, isNSBResultQualified(row)) === 'untested');
                 continueBtn.textContent = nsbBatchSpeedRunning ? '测速中...' : '⏭️ 继续测速';
             }
             const sortBtn = document.getElementById('btnNSBSort');
@@ -3733,12 +3769,15 @@
 
         function syncNSBSpeedConfigState() {
             const speedMin = parseFloat(document.getElementById('nsbSpeedMin')?.value) || 0.1;
+            const lossMax = Math.max(0, parseFloat(document.getElementById('nsbLossMax')?.value || '0') || 0);
             const speedLimit = parseInt(document.getElementById('nsbSpeedLimit')?.value, 10) || 0;
             const speedTest = parseInt(document.getElementById('nsbSpeedTest')?.value, 10) || 0;
             const tlsMode = String(document.getElementById('nsbTls')?.value || 'on').toLowerCase();
             nsbSpeedMinValue = speedMin;
+            nsbLossMaxValue = lossMax;
             return {
                 speedMin,
+                lossMax,
                 speedLimit,
                 speedTest,
                 speedURL: resolveSpeedTestUrl('nsbSpeedUrl', 'nsbSpeedUrlPreset'),
@@ -3807,9 +3846,26 @@
             return ip.includes(':') ? 'ipv6' : 'ipv4';
         }
 
+        function parseLossPercent(value) {
+            const parsed = parseFloat(String(value ?? '').replace('%', '').trim());
+            return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+        }
+
+        function getOfficialLossPercent(row) {
+            if (row && row.lossRate !== undefined && row.lossRate !== '') return parseLossPercent(row.lossRate);
+            if (row && Number.isFinite(Number(row.LossRate))) return Number(row.LossRate) * 100;
+            const ip = row?.IP || row?.ip || '';
+            const test = testData.find((item) => item.IP === ip || item.ip === ip);
+            return test && Number.isFinite(Number(test.LossRate)) ? Number(test.LossRate) * 100 : Number.POSITIVE_INFINITY;
+        }
+
         function isOfficialSpeedQualified(value) {
             const speed = parseSpeedMB(value);
             return speed >= 0 && speed >= officialSpeedMinValue;
+        }
+
+        function isOfficialResultQualified(row) {
+            return isOfficialSpeedQualified(getOfficialRowSpeed(row)) && getOfficialLossPercent(row) <= officialLossMaxValue;
         }
 
         function getOfficialRowSpeed(row) {
@@ -3835,7 +3891,7 @@
             filter = normalizeQualifiedFilter(filter);
             if (filter === 'all') return true;
             const speed = getOfficialRowSpeed(row);
-            const status = getSpeedStatus(speed, isOfficialSpeedQualified(speed));
+            const status = getSpeedStatus(speed, isOfficialResultQualified(row));
             return status === filter;
         }
 
@@ -3869,7 +3925,8 @@
             let latencyIndex = headers.indexOf('网络延迟');
             let lossIndex = headers.indexOf('丢包率');
             let speedIndex = headers.indexOf('下载速度');
-            const speedQualified = speedIndex < 0 || isNSBSpeedQualified(r[speedIndex]);
+            const lossQualified = lossIndex < 0 || parseLossPercent(r[lossIndex]) <= nsbLossMaxValue;
+            const speedQualified = (speedIndex < 0 || isNSBSpeedQualified(r[speedIndex])) && lossQualified;
             const speedStatus = speedIndex < 0 ? 'qualified' : getSpeedStatus(r[speedIndex], speedQualified);
             return headers.map((_, idx) => {
                 const val = escapeHTML(r[idx] ?? '');
@@ -3899,9 +3956,12 @@
         }
 
         function nsbRowStatusFromCSV(headers, row) {
-            const speedIndex = (headers || []).map(normalizeNSBHeader).indexOf('下载速度');
-            if (speedIndex < 0) return 'qualified';
-            return getSpeedStatus(row[speedIndex], isNSBSpeedQualified(row[speedIndex]));
+            const normalized = (headers || []).map(normalizeNSBHeader);
+            const speedIndex = normalized.indexOf('下载速度');
+            const lossIndex = normalized.indexOf('丢包率');
+            const lossQualified = lossIndex >= 0 && parseLossPercent(row[lossIndex]) <= nsbLossMaxValue;
+            if (speedIndex < 0) return lossQualified ? 'qualified' : 'unqualified';
+            return getSpeedStatus(row[speedIndex], isNSBSpeedQualified(row[speedIndex]) && lossQualified);
         }
 
         function renderScanRowsCSV(headers, rows) {
@@ -3983,7 +4043,7 @@
             const visibleHeaders = getVisibleNSBHeaders();
             const visibleRow = filterNSBRow(NSB_LIVE_HEADERS, nsbRowToArray(row));
             const tds = renderNSBRowFromCSV(visibleHeaders, visibleRow, row.originalInput);
-            const rowStatus = getSpeedStatus(row.speed, isNSBSpeedQualified(row.speed));
+            const rowStatus = getSpeedStatus(row.speed, isNSBResultQualified(row));
             return `<tr class="${rowStatus === 'qualified' ? 'row-qualified' : (rowStatus === 'unqualified' ? 'row-unqualified' : '')}">${tds}</tr>`;
         }
 
@@ -4163,10 +4223,14 @@
             return speed >= 0 && speed >= nsbSpeedMinValue;
         }
 
+        function isNSBResultQualified(row) {
+            return isNSBSpeedQualified(row?.speed) && parseLossPercent(row?.lossRate) <= nsbLossMaxValue;
+        }
+
         function matchesQualifiedFilter(row, filter) {
             filter = normalizeQualifiedFilter(filter);
             if (filter === 'all') return true;
-            const status = getSpeedStatus(row.speed, isNSBSpeedQualified(row.speed));
+            const status = getSpeedStatus(row.speed, isNSBResultQualified(row));
             return status === filter;
         }
 
@@ -4175,9 +4239,11 @@
             if (filter === 'all') return rows || [];
             const normalized = (headers || []).map(normalizeNSBHeader);
             const speedIndex = normalized.indexOf('下载速度');
-            if (speedIndex < 0) return filter === 'qualified' ? (rows || []) : [];
+            const lossIndex = normalized.indexOf('丢包率');
+            if (speedIndex < 0) return filter === 'qualified' ? (rows || []).filter((row) => lossIndex >= 0 && parseLossPercent(row[lossIndex]) <= nsbLossMaxValue) : [];
             return (rows || []).filter((row) => {
-                const status = getSpeedStatus(row[speedIndex], isNSBSpeedQualified(row[speedIndex]));
+                const qualified = isNSBSpeedQualified(row[speedIndex]) && lossIndex >= 0 && parseLossPercent(row[lossIndex]) <= nsbLossMaxValue;
+                const status = getSpeedStatus(row[speedIndex], qualified);
                 return status === filter;
             });
         }
@@ -4277,7 +4343,7 @@
             const port = res.Port || parseInt(document.getElementById('officialTestPort').value) || 443;
             const meta = testResultToObject(res);
             const speedText = res.Speed || '未测速';
-            const speedStatus = getSpeedStatus(speedText, isOfficialSpeedQualified(speedText));
+            const speedStatus = getSpeedStatus(speedText, isOfficialResultQualified(res));
             const speedColor = speedText.includes('MB/s') ? (parseFloat(speedText) > SPEED_GREEN ? '#10b981' : '#f59e0b') : (speedText === '未测速' ? 'inherit' : '#ef4444');
             const isTesting = currentSpeedTestingIP === res.IP;
             const speedDisabled = isTesting || isTaskRunning || officialBatchSpeedRunning;
@@ -4383,8 +4449,8 @@
             const val = document.getElementById(`speed-val-${data.ip.replace(/[:.]/g, '_')}`);
             const item = testData.find((r) => r.IP === data.ip);
             if (item) item.Speed = data.speed;
-            officialSpeedEnabledForResults = testData.some((r) => isOfficialSpeedQualified(r.Speed));
-            const speedStatus = getSpeedStatus(data.speed, isOfficialSpeedQualified(data.speed));
+            officialSpeedEnabledForResults = testData.some((r) => String(r.Speed || '').includes('MB/s'));
+            const speedStatus = getSpeedStatus(data.speed, item ? isOfficialResultQualified(item) : isOfficialSpeedQualified(data.speed));
             if (currentSpeedTestingIP === data.ip) {
                 currentSpeedTestingIP = '';
             }
@@ -4408,12 +4474,14 @@
             const port = parseInt(document.getElementById('officialTestPort')?.value || '443', 10) || 443;
             const url = resolveSpeedTestUrl('officialSpeedUrl', 'officialSpeedUrlPreset');
             const speedMin = parseFloat(document.getElementById('officialSpeedMin')?.value || '0.1') || 0.1;
+            const lossMax = Math.max(0, parseFloat(document.getElementById('officialLossMax')?.value || '0') || 0);
             const speedLimit = parseInt(document.getElementById('officialSpeedLimit')?.value || '0', 10) || 0;
-            return { port, url, speedMin, speedLimit, results: testData.slice() };
+            return { port, url, speedMin, lossMax, speedLimit, results: testData.slice() };
         }
 
         function syncOfficialSpeedConfigState(cfg = getOfficialSpeedConfig()) {
             officialSpeedMinValue = cfg.speedMin;
+            officialLossMaxValue = cfg.lossMax;
             officialSpeedEnabledForResults = cfg.speedLimit > 0;
             return cfg;
         }
@@ -4665,6 +4733,7 @@
                 officialSpeedPort: officialSpeedConfig.port,
                 officialSpeedURL: officialSpeedConfig.url,
                 officialSpeedMin: officialSpeedConfig.speedMin,
+                officialLossMax: officialSpeedConfig.lossMax,
                 officialSpeedLimit: officialSpeedConfig.speedLimit,
             } })) {
                 officialAutoSpeedPending = false;
@@ -4718,6 +4787,7 @@
             const speedMin = parseFloat(document.getElementById('nsbSpeedMin').value) || 0;
             const speedLimit = parseInt(document.getElementById('nsbSpeedLimit').value) || 0;
             nsbSpeedMinValue = speedMin;
+            nsbLossMaxValue = lossMax;
             nsbCompactView = document.getElementById('nsbCompactView')?.value !== 'full';
             const compact = nsbCompactView;
             nsbTableQualifiedFilter = 'all';
@@ -4828,6 +4898,20 @@
             { key: 'timestamp', label: '时间戳' },
         ];
 
+        function getPreferredQualifiedFilter() {
+            const stored = localStorage.getItem(preferredQualifiedFilterStorageKey) || 'qualified';
+            return normalizeQualifiedFilter(stored);
+        }
+
+        function savePreferredQualifiedFilter(value) {
+            const normalized = normalizeQualifiedFilter(value);
+            localStorage.setItem(preferredQualifiedFilterStorageKey, normalized);
+        }
+
+        function saveAutoUploadPreference(mode, value) {
+            localStorage.setItem(mode === 'nsb' ? nsbAutoUploadStorageKey : officialAutoUploadStorageKey, value || '');
+        }
+
         function openResultModal(mode) {
             resultModalMode = currentMode === 'nsb' ? 'nsb' : mode;
             const rows = getCurrentResultRows(resultModalMode);
@@ -4844,7 +4928,7 @@
             const qualifiedField = document.getElementById('resultQualifiedFilterField');
             if (qualifiedField) qualifiedField.style.display = '';
             const qualifiedSelect = document.getElementById('resultQualifiedFilter');
-            if (qualifiedSelect) qualifiedSelect.value = 'all';
+            if (qualifiedSelect) qualifiedSelect.value = getPreferredQualifiedFilter();
             if (!resultFieldOrder.length) resultFieldOrder = getDefaultResultFieldOrder(document.getElementById('resultFormat').value);
             renderGitHubAccounts();
             renderResultFieldOptions();
@@ -5009,7 +5093,7 @@
 
         function getOfficialResultFieldOrder(mode = resultModalMode) {
             return mode === 'test'
-                ? ['ip', 'port', 'latency', 'speed', 'dc', 'dcCountry', 'region', 'city']
+                ? ['ip', 'port', 'lossRate', 'latency', 'speed', 'dc', 'dcCountry', 'region', 'city']
                 : ['ip', 'port', 'latency', 'dc', 'dcCountry', 'region', 'city'];
         }
 
@@ -5060,9 +5144,17 @@
             const accountOptions = '<option value="">新账户/不使用保存配置</option>' + accounts.map((a, i) => `<option value="${i}">${escapeHTML(a.name || a.repo || 'GitHub账户')} ${a.tokenHash ? '(' + escapeHTML(a.tokenHash.slice(0, 10)) + ')' : ''}</option>`).join('');
             if (select) select.innerHTML = accountOptions;
             const autoSelect = document.getElementById('nsbAutoUploadAccount');
-            if (autoSelect) autoSelect.innerHTML = '<option value="">关闭自动上传</option>' + accounts.map((a, i) => `<option value="${i}:txt">${escapeHTML(a.name || a.repo || 'GitHub账户')} - TXT</option><option value="${i}:csv">${escapeHTML(a.name || a.repo || 'GitHub账户')} - CSV</option>`).join('');
+            if (autoSelect) {
+                autoSelect.innerHTML = '<option value="">关闭自动上传</option>' + accounts.map((a, i) => `<option value="${i}:txt">${escapeHTML(a.name || a.repo || 'GitHub账户')} - TXT</option><option value="${i}:csv">${escapeHTML(a.name || a.repo || 'GitHub账户')} - CSV</option>`).join('');
+                autoSelect.value = localStorage.getItem(nsbAutoUploadStorageKey) || '';
+                if (!autoSelect.value) saveAutoUploadPreference('nsb', '');
+            }
             const officialAutoSelect = document.getElementById('officialAutoUploadAccount');
-            if (officialAutoSelect) officialAutoSelect.innerHTML = '<option value="">关闭自动上传</option>' + accounts.map((a, i) => `<option value="${i}:txt">${escapeHTML(a.name || a.repo || 'GitHub账户')} - TXT</option><option value="${i}:csv">${escapeHTML(a.name || a.repo || 'GitHub账户')} - CSV</option>`).join('');
+            if (officialAutoSelect) {
+                officialAutoSelect.innerHTML = '<option value="">关闭自动上传</option>' + accounts.map((a, i) => `<option value="${i}:txt">${escapeHTML(a.name || a.repo || 'GitHub账户')} - TXT</option><option value="${i}:csv">${escapeHTML(a.name || a.repo || 'GitHub账户')} - CSV</option>`).join('');
+                officialAutoSelect.value = localStorage.getItem(officialAutoUploadStorageKey) || '';
+                if (!officialAutoSelect.value) saveAutoUploadPreference('official', '');
+            }
         }
 
         function normalizeGitHubAccountKey(account) {
@@ -5453,7 +5545,7 @@
             const qualifiedField = document.getElementById('copyQualifiedFilterField');
             if (qualifiedField) qualifiedField.style.display = '';
             const qualifiedSelect = document.getElementById('copyQualifiedFilter');
-            if (qualifiedSelect) qualifiedSelect.value = 'all';
+            if (qualifiedSelect) qualifiedSelect.value = getPreferredQualifiedFilter();
             const rows = getCopyRowsBeforeRange();
             if (!rows.length) return showNoticeCard('暂无可复制结果');
             if (!copyFieldOrder.length) copyFieldOrder = getDefaultResultFieldOrderFor(copyModalMode, 'txt');
@@ -5643,6 +5735,7 @@
                 dcCountry: scan.DCCountry || r.DCCountry || '',
                 region: scan.Region || r.Region || '',
                 city: scan.City || r.City || '',
+                lossRate: `${(Number(r.LossRate || 0) * 100).toFixed(2)}%`,
                 latency: `${(r.AvgLatency / 1_000_000).toFixed(0)}ms`,
                 speed: r.Speed || '未测速',
             };
@@ -5886,6 +5979,72 @@
             log('已提交 GitHub 上传请求');
         }
 
+        function applyScheduleStatus(data) {
+            const cfg = data?.config || {};
+            const enabled = document.getElementById('scheduleEnabled');
+            const times = document.getElementById('scheduleTimes');
+            const status = document.getElementById('scheduleStatus');
+            if (enabled) enabled.value = cfg.enabled ? 'on' : 'off';
+            if (times && Array.isArray(cfg.times) && cfg.times.length) times.value = cfg.times.join(',');
+            if (cfg.githubRepo) {
+                const idx = getGitHubAccounts().findIndex((account) => account.repo === cfg.githubRepo);
+                const select = document.getElementById('officialAutoUploadAccount');
+                if (select && idx >= 0) select.value = `${idx}:${cfg.format || 'txt'}`;
+            }
+            if (status) {
+                const state = data?.running ? '运行中' : (cfg.enabled ? '已启用' : '已停用');
+                const next = data?.nextRun ? `，下次 ${data.nextRun}` : '';
+                const lastError = data?.lastError ? `，错误：${data.lastError}` : '';
+                status.value = `${state}${next}${lastError}`;
+                status.title = status.value;
+            }
+        }
+
+        async function saveScheduleConfiguration(runNow) {
+            const selection = document.getElementById('officialAutoUploadAccount')?.value || '';
+            const [idxText, selectedFormat] = selection.split(':');
+            const idx = parseInt(idxText, 10);
+            const account = getGitHubAccounts()[idx];
+            if (!account || !account.repo) {
+                showNoticeCard('请先在“自动上传”中选择一个已保存的 GitHub 账户');
+                return;
+            }
+            const accountKey = normalizeGitHubAccountKey(account);
+            let token = githubSessionTokens.get(accountKey) || '';
+            if (!token && account.token) token = await migrateLegacyGitHubToken(account, idx);
+            if (!token && account.tokenCipher) token = await decryptStoredGitHubToken(account);
+            const enabled = document.getElementById('scheduleEnabled')?.value === 'on';
+            if (enabled && !token) {
+                showNoticeCard('无法读取该账户的 Token，请在结果操作中重新保存 GitHub 账户与 Token');
+                return;
+            }
+            const times = String(document.getElementById('scheduleTimes')?.value || '02:00,14:00')
+                .split(',').map((value) => value.trim()).filter(Boolean);
+            const speed = syncOfficialSpeedConfigState();
+            const format = selectedFormat === 'csv' ? 'csv' : 'txt';
+            const config = {
+                enabled, times, timezone: 'Asia/Shanghai',
+                ipType: parseInt(document.getElementById('officialIpType')?.value || '4', 10) || 4,
+                threads: parseInt(document.getElementById('officialThreads')?.value || '100', 10) || 100,
+                port: speed.port,
+                delay: parseInt(document.getElementById('officialDelay')?.value || '500', 10) || 0,
+                scanMode: getScanMode(), speedMin: speed.speedMin, speedLimit: speed.speedLimit,
+                lossMax: speed.lossMax, speedURL: speed.url,
+                targetDC: document.getElementById('officialTargetDC')?.value?.trim() || '',
+                format, githubRepo: account.repo, githubBranch: account.branch || 'main',
+                githubPath: (account.path || `results/ip.${format}`).replace(/\.(csv|txt)$/i, `.${format}`),
+                githubMessage: account.message || 'scheduled cfdata qualified results',
+            };
+            if (!wsSend({ type: 'save_schedule', data: { config, token } })) {
+                showNoticeCard('连接未就绪，请等待重连后再试');
+                return;
+            }
+            saveAutoUploadPreference('official', selection);
+            if (runNow) {
+                window.setTimeout(() => wsSend({ type: 'run_schedule_now', data: {} }), 250);
+            }
+        }
+
         async function autoUploadNSBResults() {
             const value = document.getElementById('nsbAutoUploadAccount')?.value || '';
             await autoUploadResults(value, 'nsb', '自动上传已提交');
@@ -5915,8 +6074,11 @@
             }
             const fields = getDefaultResultFieldOrderFor(mode, format || 'txt');
             let rows = getCurrentResultRows(mode);
+            rows = mode === 'nsb'
+                ? rows.filter((row) => matchesQualifiedFilter(row, 'qualified'))
+                : rows.filter((row) => matchesOfficialQualifiedFilter(row, 'qualified'));
             if (!rows.length) {
-                log('自动上传跳过: 没有可上传结果');
+                log('自动上传跳过: 没有速度和丢包率均合格的结果');
                 return;
             }
             const content = buildResultContent(format || 'txt', rows, fields);
@@ -5968,6 +6130,10 @@
                     applySpeedUrlConfig('nsbSpeedUrl', 'nsbSpeedUrlPreset', speedDefault);
                     renderVersionInfo(msg.data || {});
                     autoLoadConfig();
+                    wsSend({ type: 'get_schedule', data: {} });
+                    break;
+                case 'schedule_status':
+                    applyScheduleStatus(msg.data || {});
                     break;
                 case 'version_info':
                     renderVersionInfo(msg.data || {});
@@ -6388,6 +6554,7 @@
             initializeUI();
             renderGitHubAccounts();
             renderEdgetunnelAccounts();
+            window.setInterval(() => wsSend({ type: 'get_schedule', data: {} }), 30000);
             switchMode('official');
             initThemeFromStorage();
         });

@@ -18,6 +18,7 @@ type startTaskRequest struct {
 	OfficialSpeedPort int     `json:"officialSpeedPort"`
 	OfficialSpeedURL  string  `json:"officialSpeedURL"`
 	OfficialSpeedMin  float64 `json:"officialSpeedMin"`
+	OfficialLossMax   float64 `json:"officialLossMax"`
 	OfficialSpeedLimit int    `json:"officialSpeedLimit"`
 }
 
@@ -38,6 +39,7 @@ type startOfficialSpeedBatchRequest struct {
 	Port       int          `json:"port"`
 	URL        string       `json:"url"`
 	SpeedMin   float64      `json:"speedMin"`
+	LossMax    float64      `json:"lossMax"`
 	SpeedLimit int          `json:"speedLimit"`
 	Results    []TestResult `json:"results"`
 	SkipTested bool         `json:"skipTested"`

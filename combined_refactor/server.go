@@ -170,7 +170,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				results := append([]TestResult(nil), session.testResults...)
 				session.testMutex.Unlock()
 				if len(results) > 0 {
-					runOfficialSpeedBatch(ctx, session, params.OfficialSpeedPort, speedURL, params.OfficialSpeedLimit, params.OfficialSpeedMin, results, false)
+					runOfficialSpeedBatch(ctx, session, params.OfficialSpeedPort, speedURL, params.OfficialSpeedLimit, params.OfficialSpeedMin, params.OfficialLossMax, results, false)
 				}
 			})
 		},
@@ -226,7 +226,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				params.URL = speedTestURL
 			}
 			session.startTaskNamed("官方批量测速", "official", map[string]interface{}{"port": params.Port, "url": params.URL, "speedLimit": params.SpeedLimit, "speedMin": params.SpeedMin, "skipTested": params.SkipTested}, func(ctx context.Context, session *appSession) {
-				runOfficialSpeedBatch(ctx, session, params.Port, params.URL, params.SpeedLimit, params.SpeedMin, params.Results, params.SkipTested)
+				runOfficialSpeedBatch(ctx, session, params.Port, params.URL, params.SpeedLimit, params.SpeedMin, params.LossMax, params.Results, params.SkipTested)
 			})
 		},
 		"start_nsb_task": func(data json.RawMessage) {
@@ -393,6 +393,30 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		},
 		"reset_all_config": func(data json.RawMessage) {
 			resetAllConfigFiles(session)
+		},
+		"get_schedule": func(data json.RawMessage) {
+			session.sendWSMessage("schedule_status", scheduleSnapshot())
+		},
+		"save_schedule": func(data json.RawMessage) {
+			var params scheduleSaveRequest
+			if err := json.Unmarshal(data, &params); err != nil {
+				session.sendWSMessage("error", "save_schedule 参数解析失败")
+				return
+			}
+			if err := saveSchedule(params); err != nil {
+				session.sendWSMessage("error", "保存定时任务失败: "+err.Error())
+				return
+			}
+			session.sendWSMessage("schedule_status", scheduleSnapshot())
+			session.sendWSMessage("log", "定时任务配置已保存")
+		},
+		"run_schedule_now": func(data json.RawMessage) {
+			if err := startScheduledRun("手动触发"); err != nil {
+				session.sendWSMessage("error", "启动定时任务失败: "+err.Error())
+				return
+			}
+			session.sendWSMessage("schedule_status", scheduleSnapshot())
+			session.sendWSMessage("log", "已启动一次定时测速，请稍后刷新状态")
 		},
 		"get_config": func(data json.RawMessage) {
 			cfgPath := filepath.Join(filepath.Dir(os.Args[0]), "cfdata-config.json")
