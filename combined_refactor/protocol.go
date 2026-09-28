@@ -46,23 +46,24 @@ type startOfficialSpeedBatchRequest struct {
 }
 
 type startNSBTaskRequest struct {
-	FileName     string  `json:"fileName"`
-	FileContent  string  `json:"fileContent"`
-	SourceURL    string  `json:"sourceURL"`
-	OutFile      string  `json:"outFile"`
-	MaxThreads   int     `json:"maxThreads"`
-	FallbackPort int     `json:"fallbackPort"`
-	SpeedTest    int     `json:"speedTest"`
-	SpeedURL     string  `json:"speedURL"`
-	EnableTLS    bool    `json:"enableTLS"`
-	Delay        int     `json:"delay"`
-	ResultLimit  int     `json:"resultLimit"`
-	DC           string  `json:"dc"`
-	SpeedMin     float64 `json:"speedMin"`
-	LossMax      float64 `json:"lossMax"`
-	SpeedLimit   int     `json:"speedLimit"`
-	Compact      bool    `json:"compact"`
-	ScanMode     string  `json:"scanMode"`
+	FileName     string        `json:"fileName"`
+	FileContent  string        `json:"fileContent"`
+	SourceURL    string        `json:"sourceURL"`
+	OutFile      string        `json:"outFile"`
+	MaxThreads   int           `json:"maxThreads"`
+	FallbackPort int           `json:"fallbackPort"`
+	SpeedTest    int           `json:"speedTest"`
+	SpeedURL     string        `json:"speedURL"`
+	EnableTLS    bool          `json:"enableTLS"`
+	Delay        int           `json:"delay"`
+	ResultLimit  int           `json:"resultLimit"`
+	DC           string        `json:"dc"`
+	SpeedMin     float64       `json:"speedMin"`
+	LossMax      float64       `json:"lossMax"`
+	SpeedLimit   int           `json:"speedLimit"`
+	Compact      bool          `json:"compact"`
+	ScanMode     string        `json:"scanMode"`
+	WSProbe      wsProbeConfig `json:"wsProbe"`
 }
 
 type startNSBSpeedBatchRequest struct {

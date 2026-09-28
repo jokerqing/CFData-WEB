@@ -45,6 +45,7 @@ type cliConfig struct {
 	nsbDC             string
 	nsbSpeedMin       float64
 	nsbSpeedLimit     int
+	wsProbe           wsProbeConfig
 	showProgress      bool
 	noColor           bool
 	compactIPv4       bool
@@ -104,6 +105,12 @@ type cliFileConfig struct {
 	ResultLimit     int     `json:"nsbresultlimit"`
 	NSBSpeedMin     float64 `json:"nsbspeedmin"`
 	NSBSpeedLimit   int     `json:"nsbspeedlimit"`
+	NSBWSProbe      bool    `json:"nsbwsprobe"`
+	NSBWSHost       string  `json:"nsbwshost"`
+	NSBWSPath       string  `json:"nsbwspath"`
+	NSBWSAttempts   int     `json:"nsbwsattempts"`
+	NSBWSTimeout    int     `json:"nsbwstimeout"`
+	NSBWSWorkers    int     `json:"nsbwsworkers"`
 	Format          string  `json:"format"`
 	Fields          string  `json:"fields"`
 	Custom          string  `json:"custom"`
@@ -144,6 +151,10 @@ var cliResultFields = []cliResultField{
 	{Key: "latency", Label: "网络延迟"},
 	{Key: "scanMode", Label: "扫描方式"},
 	{Key: "speed", Label: "下载速度"},
+	{Key: "wsStatus", Label: "WebSocket状态"},
+	{Key: "wsLatency", Label: "WebSocket延迟"},
+	{Key: "wsSuccessRate", Label: "WebSocket成功率"},
+	{Key: "wsError", Label: "WebSocket错误"},
 	{Key: "outboundIP", Label: "出站IP"},
 	{Key: "ipType", Label: "IP类型"},
 	{Key: "originalInput", Label: "原始输入"},
@@ -233,6 +244,12 @@ var (
 		{name: "nsbresultlimit", description: "非标模式延迟测试结果上限；必须为非 0 正整数", defaultValue: "1000"},
 		{name: "nsbspeedmin", description: "非标模式测速结果阈值，单位 MB/s", defaultValue: "0.1"},
 		{name: "nsbspeedlimit", description: "非标模式测速结果上限；0 表示关闭测速", defaultValue: "5"},
+		{name: "nsbwsprobe", description: "非标模式在测速前执行真实 WSS 握手探测", defaultValue: "false"},
+		{name: "nsbwshost", description: "真实 WebSocket Host/SNI，仅填写域名", defaultValue: ""},
+		{name: "nsbwspath", description: "真实 WebSocket 请求路径", defaultValue: "/"},
+		{name: "nsbwsattempts", description: "每个候选连续 WebSocket 探测次数，必须全部成功", defaultValue: "3"},
+		{name: "nsbwstimeout", description: "WebSocket 单次握手超时，单位毫秒", defaultValue: "8000"},
+		{name: "nsbwsworkers", description: "WebSocket 探测并发数", defaultValue: "20"},
 	}
 )
 
@@ -269,6 +286,12 @@ func registerCLIFlags() *cliConfig {
 	flag.IntVar(&cfg.resultLimit, "nsbresultlimit", 1000, "非标模式延迟测试结果上限；必须为非 0 正整数")
 	flag.Float64Var(&cfg.nsbSpeedMin, "nsbspeedmin", 0.1, "非标模式测速结果阈值，单位 MB/s")
 	flag.IntVar(&cfg.nsbSpeedLimit, "nsbspeedlimit", 5, "非标模式测速结果上限；0 表示关闭测速")
+	flag.BoolVar(&cfg.wsProbe.Enabled, "nsbwsprobe", false, "非标模式在测速前执行真实 WSS 握手探测")
+	flag.StringVar(&cfg.wsProbe.Host, "nsbwshost", "", "真实 WebSocket Host/SNI，仅填写域名")
+	flag.StringVar(&cfg.wsProbe.Path, "nsbwspath", "/", "真实 WebSocket 请求路径")
+	flag.IntVar(&cfg.wsProbe.Attempts, "nsbwsattempts", defaultWSProbeAttempts, "每个候选连续 WebSocket 探测次数，必须全部成功")
+	flag.IntVar(&cfg.wsProbe.TimeoutMS, "nsbwstimeout", defaultWSProbeTimeoutMS, "WebSocket 单次握手超时，单位毫秒")
+	flag.IntVar(&cfg.wsProbe.Workers, "nsbwsworkers", defaultWSProbeWorkers, "WebSocket 探测并发数")
 	flag.BoolVar(&cfg.showProgress, "progress", true, "CLI 模式输出进度日志")
 	flag.BoolVar(&cfg.noColor, "nocolor", false, "禁用 ANSI 颜色输出（cmd 等不支持的终端建议开启）")
 	flag.BoolVar(&cfg.compactIPv4, "compactipv4", false, "精简本地 IPv4 地址库，按 /24 子网探测 TCP:80 连通性后覆盖 ips-v4.txt")
@@ -532,6 +555,12 @@ func applyCLIEnvConfig(cfg *cliConfig, provided map[string]bool) {
 	setInt("nsbresultlimit", "CFDATA_NSBRESULTLIMIT", &cfg.resultLimit)
 	setFloat("nsbspeedmin", "CFDATA_NSBSPEEDMIN", &cfg.nsbSpeedMin)
 	setInt("nsbspeedlimit", "CFDATA_NSBSPEEDLIMIT", &cfg.nsbSpeedLimit)
+	setBool("nsbwsprobe", "CFDATA_NSBWSPROBE", &cfg.wsProbe.Enabled)
+	setString("nsbwshost", "CFDATA_NSBWSHOST", &cfg.wsProbe.Host)
+	setString("nsbwspath", "CFDATA_NSBWSPATH", &cfg.wsProbe.Path)
+	setInt("nsbwsattempts", "CFDATA_NSBWSATTEMPTS", &cfg.wsProbe.Attempts)
+	setInt("nsbwstimeout", "CFDATA_NSBWSTIMEOUT", &cfg.wsProbe.TimeoutMS)
+	setInt("nsbwsworkers", "CFDATA_NSBWSWORKERS", &cfg.wsProbe.Workers)
 }
 
 func defaultCLIExportConfig() cliExportConfig {
@@ -539,7 +568,7 @@ func defaultCLIExportConfig() cliExportConfig {
 }
 
 func defaultCLIFileConfig() cliFileConfig {
-	return cliFileConfig{CLI: true, Mode: "official", ScanMode: "tcping", IPType: 4, Threads: 100, Out: "ip.csv", SpeedTest: 0, Progress: true, NoColor: false, URL: autoSpeedURLValue, DNS: defaultDNSServers, Debug: false, CompactIPv4: false, TestPort: 443, Delay: 500, DC: "", SpeedLimit: 5, SpeedMin: 0.1, File: "", SourceURL: "", NSBFallbackPort: 0, NSBIPType: "all", NSBQualified: false, NSBDC: "", TLS: true, Compact: true, ResultLimit: 1000, NSBSpeedMin: 0.1, NSBSpeedLimit: 5, Format: "txt", Fields: "compact", Custom: "", V6Bracket: true, GitHub: false, GHBranch: "main", GHPath: "", GHMessage: "update cfdata results", EdgeTunnel: false, ETMode: "overwrite"}
+	return cliFileConfig{CLI: true, Mode: "official", ScanMode: "tcping", IPType: 4, Threads: 100, Out: "ip.csv", SpeedTest: 0, Progress: true, NoColor: false, URL: autoSpeedURLValue, DNS: defaultDNSServers, Debug: false, CompactIPv4: false, TestPort: 443, Delay: 500, DC: "", SpeedLimit: 5, SpeedMin: 0.1, File: "", SourceURL: "", NSBFallbackPort: 0, NSBIPType: "all", NSBQualified: false, NSBDC: "", TLS: true, Compact: true, ResultLimit: 1000, NSBSpeedMin: 0.1, NSBSpeedLimit: 5, NSBWSProbe: false, NSBWSPath: "/", NSBWSAttempts: defaultWSProbeAttempts, NSBWSTimeout: defaultWSProbeTimeoutMS, NSBWSWorkers: defaultWSProbeWorkers, Format: "txt", Fields: "compact", Custom: "", V6Bracket: true, GitHub: false, GHBranch: "main", GHPath: "", GHMessage: "update cfdata results", EdgeTunnel: false, ETMode: "overwrite"}
 }
 
 func (c cliFileConfig) Export() cliExportConfig {
@@ -812,6 +841,12 @@ func buildCLIConfigHelp() []cliConfigHelp {
 		{Name: "nsbresultlimit", Description: "非标模式延迟测试结果上限；必须为非 0 正整数", Default: "1000"},
 		{Name: "nsbspeedmin", Description: "非标模式测速结果阈值，单位 MB/s", Default: "0.1"},
 		{Name: "nsbspeedlimit", Description: "非标模式测速结果上限；0 表示关闭测速", Default: "5"},
+		{Name: "nsbwsprobe", Description: "非标模式在测速前执行真实 WSS 握手探测", Default: "false", Options: []string{"true", "false"}},
+		{Name: "nsbwshost", Description: "真实 WebSocket Host/SNI，仅填写域名", Default: ""},
+		{Name: "nsbwspath", Description: "真实 WebSocket 请求路径", Default: "/"},
+		{Name: "nsbwsattempts", Description: "每个候选连续 WebSocket 探测次数，必须全部成功", Default: "3"},
+		{Name: "nsbwstimeout", Description: "WebSocket 单次握手超时，单位毫秒", Default: "8000"},
+		{Name: "nsbwsworkers", Description: "WebSocket 探测并发数", Default: "20"},
 		{Name: "format", Description: "导出/上传内容格式", Default: "txt", Options: []string{"csv", "txt"}},
 		{Name: "fields", Description: "导出字段；支持 compact、all、ipport 或逗号分隔字段 key；自定义字段可写在这里排序", Default: "compact", Options: []string{"compact", "all", "ipport", "ipport,dc,loc", "ipport,latency,dc,loc"}},
 		{Name: "custom", Description: "自定义导出字段，格式 标题:内容，多项用逗号分隔；未在 fields 中排序时默认追加到最后。兼容 key=标题:内容", Default: ""},
@@ -916,6 +951,12 @@ func applyCLIFileConfig(cfg *cliConfig, fileCfg cliFileConfig, provided map[stri
 	setInt("nsbresultlimit", &cfg.resultLimit, fileCfg.ResultLimit)
 	setFloat("nsbspeedmin", &cfg.nsbSpeedMin, fileCfg.NSBSpeedMin)
 	setInt("nsbspeedlimit", &cfg.nsbSpeedLimit, fileCfg.NSBSpeedLimit)
+	setBool("nsbwsprobe", &cfg.wsProbe.Enabled, fileCfg.NSBWSProbe)
+	setString("nsbwshost", &cfg.wsProbe.Host, fileCfg.NSBWSHost)
+	setString("nsbwspath", &cfg.wsProbe.Path, fileCfg.NSBWSPath)
+	setInt("nsbwsattempts", &cfg.wsProbe.Attempts, fileCfg.NSBWSAttempts)
+	setInt("nsbwstimeout", &cfg.wsProbe.TimeoutMS, fileCfg.NSBWSTimeout)
+	setInt("nsbwsworkers", &cfg.wsProbe.Workers, fileCfg.NSBWSWorkers)
 }
 
 func defaultCLIConfigPath() string {
@@ -1238,12 +1279,16 @@ func runNSBCLI(cfg *cliConfig) error {
 	if cfg.delay < 0 {
 		cfg.delay = 0
 	}
+	wsProbe, err := normalizeWSProbeConfig(cfg.wsProbe)
+	if err != nil {
+		return err
+	}
+	cfg.wsProbe = wsProbe
 	if strings.TrimSpace(cfg.outFile) == "" {
 		cfg.outFile = "ip.csv"
 	}
 	inputName := cfg.file
 	content := ""
-	var err error
 	if strings.TrimSpace(cfg.file) != "" {
 		content, err = getFileContent(cfg.file)
 		if err != nil {
@@ -1262,7 +1307,7 @@ func runNSBCLI(cfg *cliConfig) error {
 		if scanMode == "" {
 			scanMode = scanModeTCPing
 		}
-		runNSBTask(ctx, session, inputName, content, cfg.outFile, cfg.threads, cfg.nsbFallbackPort, cfg.speedTest, firstNonEmpty(cfg.speedURL, speedTestURL), cfg.enableTLS, cfg.delay, cfg.resultLimit, cfg.nsbDC, cfg.nsbSpeedMin, cfg.lossMax, cfg.nsbSpeedLimit, cfg.compactNSB, scanMode)
+		runNSBTask(ctx, session, inputName, content, cfg.outFile, cfg.threads, cfg.nsbFallbackPort, cfg.speedTest, firstNonEmpty(cfg.speedURL, speedTestURL), cfg.enableTLS, cfg.delay, cfg.resultLimit, cfg.nsbDC, cfg.nsbSpeedMin, cfg.lossMax, cfg.nsbSpeedLimit, cfg.compactNSB, scanMode, cfg.wsProbe)
 	}); err != nil {
 		return cliTaskError(err)
 	}
@@ -1384,6 +1429,12 @@ func printCLIConfig(cfg *cliConfig) {
 		{"nsbresultlimit", lookupCLIFlagDescription(cliNSBFlags, "nsbresultlimit"), strconv.Itoa(cfg.resultLimit), "1000"},
 		{"nsbspeedmin", lookupCLIFlagDescription(cliNSBFlags, "nsbspeedmin"), fmt.Sprintf("%.2f", cfg.nsbSpeedMin), "0.1"},
 		{"nsbspeedlimit", lookupCLIFlagDescription(cliNSBFlags, "nsbspeedlimit"), strconv.Itoa(cfg.nsbSpeedLimit), "5"},
+		{"nsbwsprobe", lookupCLIFlagDescription(cliNSBFlags, "nsbwsprobe"), strconv.FormatBool(cfg.wsProbe.Enabled), "false"},
+		{"nsbwshost", lookupCLIFlagDescription(cliNSBFlags, "nsbwshost"), cfg.wsProbe.Host, ""},
+		{"nsbwspath", lookupCLIFlagDescription(cliNSBFlags, "nsbwspath"), cfg.wsProbe.Path, "/"},
+		{"nsbwsattempts", lookupCLIFlagDescription(cliNSBFlags, "nsbwsattempts"), strconv.Itoa(cfg.wsProbe.Attempts), "3"},
+		{"nsbwstimeout", lookupCLIFlagDescription(cliNSBFlags, "nsbwstimeout"), strconv.Itoa(cfg.wsProbe.TimeoutMS), "8000"},
+		{"nsbwsworkers", lookupCLIFlagDescription(cliNSBFlags, "nsbwsworkers"), strconv.Itoa(cfg.wsProbe.Workers), "20"},
 	})
 	fmt.Println(colorize("----------------------------------------", ansiCyan))
 }

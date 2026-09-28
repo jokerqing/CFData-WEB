@@ -263,6 +263,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if strings.TrimSpace(params.OutFile) == "" {
 				params.OutFile = "ip.csv"
 			}
+			wsProbe, err := normalizeWSProbeConfig(params.WSProbe)
+			if err != nil {
+				session.sendWSMessage("error", err.Error())
+				return
+			}
+			params.WSProbe = wsProbe
 			hasFileContent := strings.TrimSpace(params.FileContent) != ""
 			hasSourceURL := strings.TrimSpace(params.SourceURL) != ""
 			if hasFileContent == hasSourceURL {
@@ -279,7 +285,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if scanMode == "" {
 				scanMode = scanModeTCPing
 			}
-			session.startTaskNamed("非标优选", "nsb", map[string]interface{}{"fileName": params.FileName, "sourceURL": params.SourceURL, "outFile": params.OutFile, "maxThreads": params.MaxThreads, "fallbackPort": params.FallbackPort, "speedTest": params.SpeedTest, "speedURL": params.SpeedURL, "enableTLS": params.EnableTLS, "delay": params.Delay, "resultLimit": params.ResultLimit, "dc": params.DC, "speedMin": params.SpeedMin, "speedLimit": params.SpeedLimit, "compact": params.Compact, "scanMode": scanMode}, func(ctx context.Context, session *appSession) {
+			session.startTaskNamed("非标优选", "nsb", map[string]interface{}{"fileName": params.FileName, "sourceURL": params.SourceURL, "outFile": params.OutFile, "maxThreads": params.MaxThreads, "fallbackPort": params.FallbackPort, "speedTest": params.SpeedTest, "speedURL": params.SpeedURL, "enableTLS": params.EnableTLS, "delay": params.Delay, "resultLimit": params.ResultLimit, "dc": params.DC, "speedMin": params.SpeedMin, "speedLimit": params.SpeedLimit, "compact": params.Compact, "scanMode": scanMode, "wsProbe": params.WSProbe}, func(ctx context.Context, session *appSession) {
 				fileName := params.FileName
 				fileContent := params.FileContent
 				if hasSourceURL {
@@ -296,7 +302,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					fileName = sourceName
 					fileContent = content
 				}
-				runNSBTask(ctx, session, fileName, fileContent, params.OutFile, params.MaxThreads, params.FallbackPort, params.SpeedTest, params.SpeedURL, params.EnableTLS, params.Delay, params.ResultLimit, params.DC, params.SpeedMin, params.LossMax, params.SpeedLimit, params.Compact, scanMode)
+				runNSBTask(ctx, session, fileName, fileContent, params.OutFile, params.MaxThreads, params.FallbackPort, params.SpeedTest, params.SpeedURL, params.EnableTLS, params.Delay, params.ResultLimit, params.DC, params.SpeedMin, params.LossMax, params.SpeedLimit, params.Compact, scanMode, params.WSProbe)
 			})
 		},
 		"start_nsb_speed_batch": func(data json.RawMessage) {

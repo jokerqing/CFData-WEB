@@ -66,3 +66,34 @@ func TestNSBStartDefinesLossMaxBeforeUse(t *testing.T) {
 		t.Fatal("startNSBTask must define lossMax before using it")
 	}
 }
+
+func TestNormalizeScheduleWebSocketProbe(t *testing.T) {
+	cfg, err := normalizeScheduleConfig(scheduleConfig{
+		Mode: "nsb", Times: []string{"06:00"}, SpeedLimit: 5, SpeedTest: 1, ResultLimit: 20,
+		EnableTLS: true, SourceURLs: []string{"https://example.com/nodes.txt"},
+		WSProbe: wsProbeConfig{Enabled: true, Host: "edgetunnel.example.com", Path: "tunnel", Attempts: 3},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.WSProbe.Enabled || cfg.WSProbe.Path != "/tunnel" || cfg.WSProbe.TimeoutMS != defaultWSProbeTimeoutMS || cfg.WSProbe.Workers != defaultWSProbeWorkers {
+		t.Fatalf("unexpected websocket schedule config: %#v", cfg.WSProbe)
+	}
+}
+
+func TestNSBWebSocketUIFieldsAndPayload(t *testing.T) {
+	source, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, expected := range []string{
+		`id="nsbWSProbeEnabled"`, `id="nsbWSHost"`, `id="nsbWSPath"`,
+		`id="nsbWSAttempts"`, `id="nsbWSTimeout"`, `id="nsbWSWorkers"`,
+		`const wsProbe = getNSBWSProbeConfig(true);`, `wsProbe,`,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("missing websocket UI integration %q", expected)
+		}
+	}
+}

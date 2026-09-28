@@ -1885,6 +1885,33 @@
                     </select>
                 </div>
                 <div class="option-item">
+                    <span class="label" title="在下载测速前，使用真实 SNI、Host 和路径验证 WebSocket 101 握手">🔌 WebSocket 探测</span>
+                    <select id="nsbWSProbeEnabled" onchange="updateNSBWSProbeControls()">
+                        <option value="on">开启</option>
+                        <option value="off" selected>关闭</option>
+                    </select>
+                </div>
+                <div class="option-item">
+                    <span class="label" title="真实 WebSocket 域名，同时用于 TLS SNI 和 HTTP Host；不要填写协议或端口">🌐 WS Host / SNI</span>
+                    <input id="nsbWSHost" type="text" value="" placeholder="例如 edgetunnel.example.com" disabled>
+                </div>
+                <div class="option-item full-width">
+                    <span class="label" title="真实 WebSocket 请求路径，支持查询参数">🧭 WS 路径</span>
+                    <input id="nsbWSPath" type="text" value="/" placeholder="例如 /proxyip=example.com:443" disabled>
+                </div>
+                <div class="option-item">
+                    <span class="label" title="每个候选必须连续全部成功；建议 3 次">🔁 WS 连续次数</span>
+                    <input id="nsbWSAttempts" type="number" min="1" max="10" value="3" disabled>
+                </div>
+                <div class="option-item">
+                    <span class="label" title="每次 TLS + WebSocket 握手最大等待时间，单位毫秒">⌛ WS 超时</span>
+                    <input id="nsbWSTimeout" type="number" min="100" max="60000" value="8000" disabled>
+                </div>
+                <div class="option-item">
+                    <span class="label" title="同时探测的候选节点数量">⚙️ WS 并发</span>
+                    <input id="nsbWSWorkers" type="number" min="1" max="200" value="20" disabled>
+                </div>
+                <div class="option-item">
                     <span class="label" title="CSV 导出文件名">🛠️ 输出文件名</span>
                     <input id="nsbOutFile" type="text" value="ip.csv" placeholder="ip.csv">
                 </div>
@@ -2628,6 +2655,7 @@
 
         function initializeUI() {
             updateNSBSpeedControls();
+            updateNSBWSProbeControls();
             updateOfficialAutoSpeedControls();
             updateBatchSpeedButton();
         }
@@ -2658,6 +2686,35 @@
             speedTestInput.value = '0';
             speedTestInput.disabled = true;
             updateNSBSpeedButtons();
+        }
+
+        function updateNSBWSProbeControls() {
+            const enabled = String(document.getElementById('nsbWSProbeEnabled')?.value || 'off').toLowerCase() === 'on';
+            ['nsbWSHost', 'nsbWSPath', 'nsbWSAttempts', 'nsbWSTimeout', 'nsbWSWorkers'].forEach((id) => {
+                const input = document.getElementById(id);
+                if (input) input.disabled = !enabled;
+            });
+        }
+
+        function getNSBWSProbeConfig(showError = true) {
+            const enabled = String(document.getElementById('nsbWSProbeEnabled')?.value || 'off').toLowerCase() === 'on';
+            const host = String(document.getElementById('nsbWSHost')?.value || '').trim();
+            let path = String(document.getElementById('nsbWSPath')?.value || '/').trim() || '/';
+            const attempts = parseInt(document.getElementById('nsbWSAttempts')?.value || '3', 10) || 0;
+            const timeoutMs = parseInt(document.getElementById('nsbWSTimeout')?.value || '8000', 10) || 0;
+            const workers = parseInt(document.getElementById('nsbWSWorkers')?.value || '20', 10) || 0;
+            if (!path.startsWith('/')) path = '/' + path;
+            if (!enabled) return { enabled: false, host: '', path: '/', attempts: 3, timeoutMs: 8000, workers: 20 };
+            let error = '';
+            if (!host || host.includes('://') || /[\/?#]/.test(host)) error = 'WS Host / SNI 只能填写域名，不能包含协议、端口或路径';
+            else if (attempts < 1 || attempts > 10) error = 'WS 连续探测次数必须在 1-10 之间';
+            else if (timeoutMs < 100 || timeoutMs > 60000) error = 'WS 单次超时必须在 100-60000 毫秒之间';
+            else if (workers < 1 || workers > 200) error = 'WS 探测并发必须在 1-200 之间';
+            if (error) {
+                if (showError) showNoticeCard(error);
+                return null;
+            }
+            return { enabled, host, path, attempts, timeoutMs, workers };
         }
 
         function updateNSBFallbackPortDefault() {
@@ -2799,6 +2856,12 @@
                     outFile: val('nsbOutFile'),
                     speedUrl: resolveSpeedTestUrl('nsbSpeedUrl', 'nsbSpeedUrlPreset'),
                     sourceUrl: val('nsbSourceUrl'),
+                    wsProbeEnabled: selVal('nsbWSProbeEnabled'),
+                    wsHost: val('nsbWSHost'),
+                    wsPath: val('nsbWSPath'),
+                    wsAttempts: val('nsbWSAttempts'),
+                    wsTimeout: val('nsbWSTimeout'),
+                    wsWorkers: val('nsbWSWorkers'),
                 },
             };
         }
@@ -2837,8 +2900,15 @@
             if (n.compactView) setValue('nsbCompactView', n.compactView);
             setValue('nsbOutFile', n.outFile);
             setValue('nsbSourceUrl', n.sourceUrl);
+            setValue('nsbWSProbeEnabled', n.wsProbeEnabled || 'off');
+            setValue('nsbWSHost', n.wsHost || '');
+            setValue('nsbWSPath', n.wsPath || '/');
+            setValue('nsbWSAttempts', n.wsAttempts || 3);
+            setValue('nsbWSTimeout', n.wsTimeout || 8000);
+            setValue('nsbWSWorkers', n.wsWorkers || 20);
             if (o.speedUrl) applySpeedUrlConfig('officialSpeedUrl', 'officialSpeedUrlPreset', o.speedUrl);
             if (n.speedUrl) applySpeedUrlConfig('nsbSpeedUrl', 'nsbSpeedUrlPreset', n.speedUrl);
+            updateNSBWSProbeControls();
             syncOfficialSpeedConfigState();
             syncNSBSpeedConfigState();
             updateOfficialAutoSpeedControls();
@@ -2912,6 +2982,13 @@
             if (compact !== undefined) result.nsb.compactView = compact === true || String(compact).toLowerCase() === 'true' || String(compact) === '1' ? 'compact' : 'full';
             result.nsb.outFile = pick(c, ['nsbout', 'out']);
             result.nsb.sourceUrl = pick(c, ['nsbsourceurl', 'sourceurl']);
+            const wsProbe = pick(c, ['nsbwsprobe']);
+            if (wsProbe !== undefined) result.nsb.wsProbeEnabled = wsProbe === true || String(wsProbe).toLowerCase() === 'true' || String(wsProbe) === '1' ? 'on' : 'off';
+            result.nsb.wsHost = pick(c, ['nsbwshost']);
+            result.nsb.wsPath = pick(c, ['nsbwspath']);
+            result.nsb.wsAttempts = pick(c, ['nsbwsattempts']);
+            result.nsb.wsTimeout = pick(c, ['nsbwstimeout']);
+            result.nsb.wsWorkers = pick(c, ['nsbwsworkers']);
             return result;
         }
 
@@ -3617,6 +3694,15 @@
             setValue('nsbTargetDC', params.dc);
             setValue('nsbOutFile', params.outFile);
             if (params.enableTLS !== undefined) setValue('nsbTls', params.enableTLS ? 'on' : 'off');
+            if (params.wsProbe) {
+                setValue('nsbWSProbeEnabled', params.wsProbe.enabled ? 'on' : 'off');
+                setValue('nsbWSHost', params.wsProbe.host || '');
+                setValue('nsbWSPath', params.wsProbe.path || '/');
+                setValue('nsbWSAttempts', params.wsProbe.attempts || 3);
+                setValue('nsbWSTimeout', params.wsProbe.timeoutMs || 8000);
+                setValue('nsbWSWorkers', params.wsProbe.workers || 20);
+                updateNSBWSProbeControls();
+            }
             syncOfficialSpeedConfigState();
             syncNSBSpeedConfigState();
             updateOfficialAutoSpeedControls();
@@ -3957,8 +4043,11 @@
             let latencyIndex = headers.indexOf('网络延迟');
             let lossIndex = headers.indexOf('丢包率');
             let speedIndex = headers.indexOf('下载速度');
+            let wsIndex = headers.indexOf('WebSocket状态');
             const lossQualified = lossIndex < 0 || parseLossPercent(r[lossIndex]) <= nsbLossMaxValue;
-            const speedQualified = (speedIndex < 0 || isNSBSpeedQualified(r[speedIndex])) && lossQualified;
+            const wsValue = wsIndex < 0 ? '' : String(r[wsIndex] || '').trim();
+            const wsHealthy = !wsValue || wsValue === '-' || wsValue === '健康';
+            const speedQualified = (speedIndex < 0 || isNSBSpeedQualified(r[speedIndex])) && lossQualified && wsHealthy;
             const speedStatus = speedIndex < 0 ? 'qualified' : getSpeedStatus(r[speedIndex], speedQualified);
             return headers.map((_, idx) => {
                 const val = escapeHTML(r[idx] ?? '');
@@ -3981,6 +4070,9 @@
                     const color = speedStatus === 'untested' ? 'inherit' : (speedVal > SPEED_GREEN ? '#10b981' : (speedVal > 0 ? '#f59e0b' : '#ef4444'));
                     const cls = speedQualified ? '' : ' class="speed-unqualified"';
                     return `<td${cls} style="color:${color}; font-weight:600;"><span class="speed-cell-content"><span>${val}</span>${renderSpeedStatusTag(speedStatus)}</span></td>`;
+                } else if (idx === wsIndex && wsIndex !== -1) {
+                    const color = rawVal === '健康' ? '#10b981' : (rawVal && rawVal !== '-' ? '#ef4444' : 'inherit');
+                    return `<td style="color:${color}; font-weight:600;">${val}</td>`;
                 } else {
                     return `<td>${val}</td>`;
                 }
@@ -3991,9 +4083,12 @@
             const normalized = (headers || []).map(normalizeNSBHeader);
             const speedIndex = normalized.indexOf('下载速度');
             const lossIndex = normalized.indexOf('丢包率');
+            const wsIndex = normalized.indexOf('WebSocket状态');
             const lossQualified = lossIndex >= 0 && parseLossPercent(row[lossIndex]) <= nsbLossMaxValue;
-            if (speedIndex < 0) return lossQualified ? 'qualified' : 'unqualified';
-            return getSpeedStatus(row[speedIndex], isNSBSpeedQualified(row[speedIndex]) && lossQualified);
+            const wsValue = wsIndex < 0 ? '' : String(row[wsIndex] || '').trim();
+            const wsHealthy = !wsValue || wsValue === '-' || wsValue === '健康';
+            if (speedIndex < 0) return lossQualified && wsHealthy ? 'qualified' : 'unqualified';
+            return getSpeedStatus(row[speedIndex], isNSBSpeedQualified(row[speedIndex]) && lossQualified && wsHealthy);
         }
 
         function renderScanRowsCSV(headers, rows) {
@@ -4016,8 +4111,8 @@
             updateNSBSpeedButtons();
         }
 
-        const NSB_LIVE_HEADERS = ['IP地址', '端口号', 'TLS', '丢包率', '扫描方式', '网络延迟', '下载速度', '出站IP', 'IP类型', 'OriginalInput', '数据中心', '源IP位置', '地区', '城市', 'ASN号码', 'ASN组织', '访问协议', 'TLS版本', 'SNI', 'HTTP版本', 'WARP', 'Gateway', 'RBI', '密钥交换', '时间戳'];
-        const NSB_COMPACT_HEADERS = ['IP地址', '端口号', 'TLS', '丢包率', '扫描方式', '网络延迟', '下载速度', '出站IP', 'IP类型', 'OriginalInput', '数据中心', '源IP位置', '地区', '城市', 'ASN号码', 'ASN组织'];
+        const NSB_LIVE_HEADERS = ['IP地址', '端口号', 'TLS', '丢包率', '扫描方式', '网络延迟', '下载速度', 'WebSocket状态', 'WebSocket延迟', 'WebSocket成功率', 'WebSocket错误', '出站IP', 'IP类型', 'OriginalInput', '数据中心', '源IP位置', '地区', '城市', 'ASN号码', 'ASN组织', '访问协议', 'TLS版本', 'SNI', 'HTTP版本', 'WARP', 'Gateway', 'RBI', '密钥交换', '时间戳'];
+        const NSB_COMPACT_HEADERS = ['IP地址', '端口号', 'TLS', '丢包率', '扫描方式', '网络延迟', '下载速度', 'WebSocket状态', 'WebSocket延迟', 'WebSocket成功率', '出站IP', 'IP类型', 'OriginalInput', '数据中心', '源IP位置', '地区', '城市', 'ASN号码', 'ASN组织'];
 
         function normalizeNSBHeader(header) {
             if (header === 'IP') return 'IP地址';
@@ -4051,6 +4146,7 @@
         function nsbRowToArray(row) {
             return [
                 row.ip || '', row.port || '', row.tls ?? '-', row.lossRate || '0%', getScanModeLabel(), row.latency || '-', row.speed || '-',
+                row.wsStatus || '-', row.wsLatency || '-', row.wsSuccessRate || '-', row.wsError || '-',
                 row.outboundIP || '-', row.ipType || '-', row.originalInput || '', row.dc || '-', row.loc || '-',
                 row.region || '-', row.city || '-', row.asnNumber || '-', row.asnOrg || '-',
                 row.visitScheme || '-', row.tlsVersion || '-', row.sni || '-', row.httpVersion || '-',
@@ -4160,6 +4256,10 @@
                 丢包率: row.lossRate || row.LossRate || '0%',
                 网络延迟: row.latency || row.Latency || '-',
                 下载速度: row.speed || row.Speed || '-',
+                WebSocket状态: row.wsStatus || row.WSStatus || '-',
+                WebSocket延迟: row.wsLatency || row.WSLatency || '-',
+                WebSocket成功率: row.wsSuccessRate || row.WSSuccessRate || '-',
+                WebSocket错误: row.wsError || row.WSError || '-',
                 出站IP: row.outboundIP || row.OutboundIP || '-',
                 IP类型: row.ipType || row.IPType || '-',
                 原始输入: row.originalInput || row.OriginalInput || '-',
@@ -4200,6 +4300,10 @@
                 lossRate: patch['丢包率'],
                 latency: patch['网络延迟'],
                 speed: patch['下载速度'],
+                wsStatus: patch['WebSocket状态'],
+                wsLatency: patch['WebSocket延迟'],
+                wsSuccessRate: patch['WebSocket成功率'],
+                wsError: patch['WebSocket错误'],
                 outboundIP: patch['出站IP'],
                 ipType: patch['IP类型'],
                 dc: patch['数据中心'],
@@ -4256,7 +4360,9 @@
         }
 
         function isNSBResultQualified(row) {
-            return isNSBSpeedQualified(row?.speed) && parseLossPercent(row?.lossRate) <= nsbLossMaxValue;
+            const wsStatus = String(row?.wsStatus || '').trim();
+            const wsHealthy = !wsStatus || wsStatus === '-' || wsStatus === '健康';
+            return wsHealthy && isNSBSpeedQualified(row?.speed) && parseLossPercent(row?.lossRate) <= nsbLossMaxValue;
         }
 
         function matchesQualifiedFilter(row, filter) {
@@ -4272,9 +4378,12 @@
             const normalized = (headers || []).map(normalizeNSBHeader);
             const speedIndex = normalized.indexOf('下载速度');
             const lossIndex = normalized.indexOf('丢包率');
+            const wsIndex = normalized.indexOf('WebSocket状态');
             if (speedIndex < 0) return filter === 'qualified' ? (rows || []).filter((row) => lossIndex >= 0 && parseLossPercent(row[lossIndex]) <= nsbLossMaxValue) : [];
             return (rows || []).filter((row) => {
-                const qualified = isNSBSpeedQualified(row[speedIndex]) && lossIndex >= 0 && parseLossPercent(row[lossIndex]) <= nsbLossMaxValue;
+                const wsValue = wsIndex < 0 ? '' : String(row[wsIndex] || '').trim();
+                const wsHealthy = !wsValue || wsValue === '-' || wsValue === '健康';
+                const qualified = wsHealthy && isNSBSpeedQualified(row[speedIndex]) && lossIndex >= 0 && parseLossPercent(row[lossIndex]) <= nsbLossMaxValue;
                 const status = getSpeedStatus(row[speedIndex], qualified);
                 return status === filter;
             });
@@ -4824,6 +4933,8 @@
             nsbLossMaxValue = lossMax;
             nsbCompactView = document.getElementById('nsbCompactView')?.value !== 'full';
             const compact = nsbCompactView;
+            const wsProbe = getNSBWSProbeConfig(true);
+            if (!wsProbe) return;
             nsbTableQualifiedFilter = 'all';
             setNSBTableQualifiedFilter('all');
 
@@ -4888,6 +4999,7 @@
                     speedLimit,
                     compact,
                     scanMode: getScanMode(),
+                    wsProbe,
                 }
             })) {
                 finishRunningTask('✨ 开始扫描与测试');
@@ -5993,7 +6105,15 @@
                 setValue('nsbTls', cfg.enableTLS ? 'on' : 'off');
                 setValue('nsbCompactView', cfg.compact ? 'compact' : 'full');
                 if (cfg.speedURL) applySpeedUrlConfig('nsbSpeedUrl', 'nsbSpeedUrlPreset', cfg.speedURL);
+                const wsProbe = cfg.wsProbe || {};
+                setValue('nsbWSProbeEnabled', wsProbe.enabled ? 'on' : 'off');
+                setValue('nsbWSHost', wsProbe.host || '');
+                setValue('nsbWSPath', wsProbe.path || '/');
+                setValue('nsbWSAttempts', wsProbe.attempts || 3);
+                setValue('nsbWSTimeout', wsProbe.timeoutMs || 8000);
+                setValue('nsbWSWorkers', wsProbe.workers || 20);
                 updateNSBSpeedControls();
+                updateNSBWSProbeControls();
             }
             const state = data?.running ? '运行中' : (cfg.enabled ? '已启用' : '已停用');
             const next = data?.nextRun ? `，下次 ${data.nextRun}` : '';
@@ -6056,6 +6176,8 @@
                     return;
                 }
                 const enableTLS = String(document.getElementById('nsbTls')?.value || 'on').toLowerCase() !== 'off';
+                const wsProbe = getNSBWSProbeConfig(true);
+                if (!wsProbe) return;
                 Object.assign(config, {
                     sourceURLs,
                     threads: parseInt(document.getElementById('nsbThreads')?.value || '100', 10) || 100,
@@ -6067,6 +6189,7 @@
                     resultLimit: parseInt(document.getElementById('nsbResultLimit')?.value || '1000', 10) || 0,
                     targetDC: document.getElementById('nsbTargetDC')?.value?.trim() || '',
                     compact: document.getElementById('nsbCompactView')?.value !== 'full',
+                    wsProbe,
                 });
             } else {
                 const speed = syncOfficialSpeedConfigState();

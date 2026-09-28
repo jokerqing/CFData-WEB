@@ -14,6 +14,7 @@ CFData-Web 是一个基于 Go 的 Cloudflare IP 测试与筛选工具，提供�
 
 - 官方优选：扫描 Cloudflare IPv4/IPv6，按数据中心继续详细延迟测试。
 - 非标优选：上传本地 txt/csv 或填写网络 URL，测试自定义 IP/域名与端口。
+- 真实 WebSocket 探测：用指定的 TLS SNI、HTTP Host 和路径验证候选节点能否完成标准 `101 Switching Protocols` 握手，可设置连续次数、超时和并发。
 - 测速：支持单点测速、批量测速、非标并发测速和测速阈值筛选。
 - 导出：支持 CSV/TXT、自定义字段、IP 类型筛选、合格结果筛选。
 - 上传：支持将导出结果上传到 GitHub。
@@ -81,6 +82,8 @@ CLI 模式：
 5. 在结果表格查看、筛选、导出或上传。
 6. 如需定时运行，在非标页面选择自动上传账户、执行时间并保存；服务端会按速度和最大丢包率筛选合格结果后上传。
 
+需要筛选真实 WebSocket 入口时，开启“WebSocket 探测”，填写隧道实际使用的 Host/SNI 和路径。CFData 会直连每个候选 IP/端口，同时保留真实域名作为 TLS SNI 与 HTTP Host；只有连续探测全部成功的节点才会进入下载测速和最终导出。该探测验证 WebSocket 握手，不包含 VLESS 等上层协议认证。
+
 非标输入推荐格式：
 
 ```text
@@ -144,6 +147,21 @@ CLI 可通过 `-offurl`/`-nsburl` 指定：
 -nsbresultlimit   非标延迟测试结果上限
 -nsbspeedmin      非标测速合格阈值，单位 MB/s
 -nsbspeedlimit    非标测速合格结果上限
+-nsbwsprobe       开启真实 WSS 握手探测
+-nsbwshost        真实 WebSocket Host/SNI，仅填写域名
+-nsbwspath        真实 WebSocket 请求路径
+-nsbwsattempts    每个候选连续探测次数，默认 3，必须全部成功
+-nsbwstimeout     单次握手超时，单位毫秒，默认 8000
+-nsbwsworkers     WebSocket 探测并发，默认 20
+```
+
+示例：
+
+```bash
+./cfdata-linux-amd64 -cli -mode nsb -nsbfile ip.txt -nsbtls=true \
+  -nsbwsprobe=true -nsbwshost edgetunnel.example.com \
+  -nsbwspath '/proxyip=proxy.example.com:443' \
+  -nsbwsattempts 3 -nsbwstimeout 8000 -nsbwsworkers 20
 ```
 
 完整参数可运行：

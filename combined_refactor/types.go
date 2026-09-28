@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	requestURL       = "speed.cloudflare.com/cdn-cgi/trace"
-	scanModeTCPing   = "tcping"
-	scanModeHTTPing  = "httping"
+	requestURL      = "speed.cloudflare.com/cdn-cgi/trace"
+	scanModeTCPing  = "tcping"
+	scanModeHTTPing = "httping"
 )
 
 func latencyMultiplier(scanMode string, isTLS bool) float64 {
@@ -118,6 +118,12 @@ type iptestResult struct {
 	speedText      string
 	speedTested    bool
 	speedQualified bool
+	wsTested       bool
+	wsHealthy      bool
+	wsSuccesses    int
+	wsAttempts     int
+	wsDuration     time.Duration
+	wsError        string
 }
 
 type nsbScanMessage struct {
@@ -133,6 +139,10 @@ type nsbScanMessage struct {
 	LossRate       string `json:"lossRate,omitempty"`
 	Speed          string `json:"speed,omitempty"`
 	SpeedQualified bool   `json:"speedQualified,omitempty"`
+	WSStatus       string `json:"wsStatus,omitempty"`
+	WSLatency      string `json:"wsLatency,omitempty"`
+	WSSuccessRate  string `json:"wsSuccessRate,omitempty"`
+	WSError        string `json:"wsError,omitempty"`
 	OutboundIP     string `json:"outboundIP,omitempty"`
 	IPType         string `json:"ipType,omitempty"`
 	ASNNumber      string `json:"asnNumber,omitempty"`
@@ -171,6 +181,10 @@ func (r *iptestResult) toNSBMessage(speedStr string) nsbScanMessage {
 		LossRate:       fmt.Sprintf("%.0f%%", r.lossRate*100),
 		Speed:          speedStr,
 		SpeedQualified: r.speedQualified,
+		WSStatus:       r.wsStatusText(),
+		WSLatency:      r.wsLatencyText(),
+		WSSuccessRate:  r.wsSuccessRateText(),
+		WSError:        r.wsError,
 		OutboundIP:     r.outboundIP,
 		IPType:         r.ipType,
 		ASNNumber:      r.asnNumber,
@@ -208,11 +222,39 @@ func (r *iptestResult) toCompactNSBMessage(speedStr string) nsbScanMessage {
 		LossRate:       fmt.Sprintf("%.0f%%", r.lossRate*100),
 		Speed:          speedStr,
 		SpeedQualified: r.speedQualified,
+		WSStatus:       r.wsStatusText(),
+		WSLatency:      r.wsLatencyText(),
+		WSSuccessRate:  r.wsSuccessRateText(),
+		WSError:        r.wsError,
 		OutboundIP:     r.outboundIP,
 		IPType:         r.ipType,
 		ASNNumber:      r.asnNumber,
 		ASNOrg:         r.asnOrg,
 	}
+}
+
+func (r *iptestResult) wsStatusText() string {
+	if !r.wsTested {
+		return ""
+	}
+	if r.wsHealthy {
+		return "健康"
+	}
+	return "失败"
+}
+
+func (r *iptestResult) wsLatencyText() string {
+	if !r.wsTested || r.wsDuration <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%dms", r.wsDuration.Milliseconds())
+}
+
+func (r *iptestResult) wsSuccessRateText() string {
+	if !r.wsTested || r.wsAttempts <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", r.wsSuccesses, r.wsAttempts)
 }
 
 type csvHeaderPayload struct {

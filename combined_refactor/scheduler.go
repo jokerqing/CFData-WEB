@@ -15,31 +15,32 @@ import (
 const schedulerTimezone = "Asia/Shanghai"
 
 type scheduleConfig struct {
-	Enabled       bool     `json:"enabled"`
-	Times         []string `json:"times"`
-	Timezone      string   `json:"timezone"`
-	Mode          string   `json:"mode"`
-	IPType        int      `json:"ipType"`
-	Threads       int      `json:"threads"`
-	Port          int      `json:"port"`
-	Delay         int      `json:"delay"`
-	ScanMode      string   `json:"scanMode"`
-	SpeedMin      float64  `json:"speedMin"`
-	SpeedLimit    int      `json:"speedLimit"`
-	LossMax       float64  `json:"lossMax"`
-	SpeedURL      string   `json:"speedURL"`
-	TargetDC      string   `json:"targetDC"`
-	SourceURLs    []string `json:"sourceURLs,omitempty"`
-	FallbackPort  int      `json:"fallbackPort,omitempty"`
-	SpeedTest     int      `json:"speedTest,omitempty"`
-	EnableTLS     bool     `json:"enableTLS,omitempty"`
-	ResultLimit   int      `json:"resultLimit,omitempty"`
-	Compact       bool     `json:"compact,omitempty"`
-	Format        string   `json:"format"`
-	GitHubRepo    string   `json:"githubRepo"`
-	GitHubBranch  string   `json:"githubBranch"`
-	GitHubPath    string   `json:"githubPath"`
-	GitHubMessage string   `json:"githubMessage"`
+	Enabled       bool          `json:"enabled"`
+	Times         []string      `json:"times"`
+	Timezone      string        `json:"timezone"`
+	Mode          string        `json:"mode"`
+	IPType        int           `json:"ipType"`
+	Threads       int           `json:"threads"`
+	Port          int           `json:"port"`
+	Delay         int           `json:"delay"`
+	ScanMode      string        `json:"scanMode"`
+	SpeedMin      float64       `json:"speedMin"`
+	SpeedLimit    int           `json:"speedLimit"`
+	LossMax       float64       `json:"lossMax"`
+	SpeedURL      string        `json:"speedURL"`
+	TargetDC      string        `json:"targetDC"`
+	SourceURLs    []string      `json:"sourceURLs,omitempty"`
+	FallbackPort  int           `json:"fallbackPort,omitempty"`
+	SpeedTest     int           `json:"speedTest,omitempty"`
+	EnableTLS     bool          `json:"enableTLS,omitempty"`
+	ResultLimit   int           `json:"resultLimit,omitempty"`
+	Compact       bool          `json:"compact,omitempty"`
+	WSProbe       wsProbeConfig `json:"wsProbe,omitempty"`
+	Format        string        `json:"format"`
+	GitHubRepo    string        `json:"githubRepo"`
+	GitHubBranch  string        `json:"githubBranch"`
+	GitHubPath    string        `json:"githubPath"`
+	GitHubMessage string        `json:"githubMessage"`
 }
 
 type scheduleSaveRequest struct {
@@ -167,8 +168,14 @@ func normalizeScheduleConfig(cfg scheduleConfig) (scheduleConfig, error) {
 		if cfg.ResultLimit <= 0 {
 			return cfg, errors.New("非标定时扫描合格数量必须大于 0")
 		}
+		wsProbe, err := normalizeWSProbeConfig(cfg.WSProbe)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.WSProbe = wsProbe
 	} else {
 		cfg.SourceURLs = nil
+		cfg.WSProbe = wsProbeConfig{}
 	}
 	cfg.Format = strings.ToLower(strings.TrimSpace(cfg.Format))
 	if cfg.Format != "csv" {
@@ -414,6 +421,7 @@ func runScheduledNSB(cfg scheduleConfig) error {
 		lossMax: cfg.LossMax, enableTLS: cfg.EnableTLS, compactNSB: cfg.Compact,
 		nsbIPType: "all", nsbQualified: true, nsbDC: cfg.TargetDC,
 		nsbSpeedMin: cfg.SpeedMin, nsbSpeedLimit: cfg.SpeedLimit,
+		wsProbe:      cfg.WSProbe,
 		showProgress: false, noColor: true,
 		export: cliExportConfig{
 			Format: cfg.Format, Fields: "compact", GitHub: true, GitHubSet: true,
