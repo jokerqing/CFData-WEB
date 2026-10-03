@@ -179,6 +179,10 @@ func main() {
 		}
 	}
 	speedTestWorkers = cliCfg.speedTest
+	if _, enabled, _ := loadProxySpeedConfig(); enabled {
+		speedTestURL = googleProxySpeedURL
+		speedTestWorkers = 1
+	}
 	configureHTTPClients()
 	startupSpeedTestURL := speedTestURL
 	if !cliCfg.enabled {

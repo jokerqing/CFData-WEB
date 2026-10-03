@@ -6279,6 +6279,7 @@
         function handleMessage(msg) {
             switch (msg.type) {
                 case 'init_config':
+					if (msg.data.proxySpeedEnabled) log('已启用 Google 文件真实代理测速：每个节点连续三轮下载，定时任务在服务器自动运行。');
                     defaultSpeedTestUrl = msg.data.speedTestURL || defaultSpeedTestUrl;
                     webDebugMode = !!msg.data.debug;
                     cfCountry = normalizeProxyCountry(msg.data || {});

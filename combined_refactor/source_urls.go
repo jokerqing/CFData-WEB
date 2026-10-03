@@ -32,6 +32,10 @@ func parseNetworkSourceURLs(raw string) ([]string, error) {
 }
 
 func fetchNetworkSourceURLs(ctx context.Context, raw string) (string, string, error) {
+	return fetchNetworkSourceURLsWithPolicy(ctx, raw, false)
+}
+
+func fetchNetworkSourceURLsWithPolicy(ctx context.Context, raw string, allowPartial bool) (string, string, error) {
 	urls, err := parseNetworkSourceURLs(raw)
 	if err != nil {
 		return "", "", err
@@ -66,11 +70,20 @@ func fetchNetworkSourceURLs(ctx context.Context, raw string) (string, string, er
 	wg.Wait()
 
 	contents := make([]string, 0, len(results))
+	availableURLs := make([]string, 0, len(results))
 	for idx, result := range results {
 		if result.err != nil {
+			if allowPartial {
+				fmt.Printf("[sources] 跳过暂时不可用的候选来源 %d: %s\n", idx+1, urls[idx])
+				continue
+			}
 			return "", "", fmt.Errorf("获取第 %d 个网络 URL 失败（%s）: %w", idx+1, urls[idx], result.err)
 		}
 		contents = append(contents, strings.TrimSpace(result.content))
+		availableURLs = append(availableURLs, urls[idx])
 	}
-	return strings.Join(contents, "\n"), strings.Join(urls, ", "), nil
+	if len(contents) == 0 {
+		return "", "", fmt.Errorf("所有候选来源均不可用")
+	}
+	return strings.Join(contents, "\n"), strings.Join(availableURLs, ", "), nil
 }

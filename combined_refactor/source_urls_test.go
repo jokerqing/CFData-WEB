@@ -64,6 +64,28 @@ func TestFetchNetworkSourceURLsRunsConcurrentlyAndKeepsOrder(t *testing.T) {
 	}
 }
 
+func TestSourcePartialFailurePolicy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/bad" {
+			w.WriteHeader(503)
+			return
+		}
+		_, _ = w.Write([]byte("43.169.18.179:443\n"))
+	}))
+	defer server.Close()
+	raw := server.URL + "/bad\n" + server.URL + "/good"
+	if _, _, err := fetchNetworkSourceURLs(context.Background(), raw); err == nil {
+		t.Fatal("strict policy must reject a failed source")
+	}
+	content, name, err := fetchNetworkSourceURLsWithPolicy(context.Background(), raw, true)
+	if err != nil || content != "43.169.18.179:443" || name != server.URL+"/good" {
+		t.Fatalf("partial source policy: content=%q name=%q error=%v", content, name, err)
+	}
+	if _, _, err := fetchNetworkSourceURLsWithPolicy(context.Background(), server.URL+"/bad", true); err == nil {
+		t.Fatal("all failed sources must not succeed")
+	}
+}
+
 func TestFilterNSBQualifiedRowsRequiresLossAndSpeed(t *testing.T) {
 	rows := []cliResultRow{
 		{"ip": "1.1.1.1", "speed": "10.00MB/s", "lossRate": "0.00%"},

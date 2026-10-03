@@ -16,6 +16,9 @@ func isTLSPort(port int) bool {
 }
 
 func runWindowedSpeedTest(ctx context.Context, ip string, port int, customURL string) (float64, string) {
+	if speed, err, enabled := runProxySpeedTest(ctx, ip, port, customURL); enabled {
+		return speed, err
+	}
 	scheme := "http"
 	if isTLSPort(port) {
 		scheme = "https"

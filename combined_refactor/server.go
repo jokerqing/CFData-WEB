@@ -77,6 +77,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		cancel()
 	}
 	defaultSpeedURL, speedISP, speedISPErr := resolveStartupSpeedTestURL(r.Context(), speedTestURL)
+	_, proxySpeedEnabled, _ := loadProxySpeedConfig()
+	if proxySpeedEnabled {
+		defaultSpeedURL = googleProxySpeedURL
+	}
 	if speedISPErr != nil {
 		recordDebugError("speed_isp_check", speedISPErr.Error())
 	}
@@ -84,16 +88,17 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		recordDebugByLevel("all", "speed_isp_check", fmt.Sprintf("asn=%d org=%s mobile=%v selected=%s", speedISP.ASN, speedISP.ASOrganization, isChinaMobileISP(speedISP), currentAutoSpeedURLDefault()))
 	}
 	session.sendWSMessage("init_config", map[string]interface{}{
-		"speedTestURL":     speedTestURL,
-		"speedTestDefault": defaultSpeedURL,
-		"speedTestWorkers": speedTestWorkers,
-		"debug":            debugMode,
-		"version":          appVersion,
-		"releaseURL":       releaseLatestURL,
-		"cfCountry":        cfCountry,
-		"proxyWarning":     !skipGeoCheck && (!cfCountryOK || shouldWarnProxyCountry(cfCountry)),
-		"geoCheckOK":       cfCountryOK,
-		"skipGeoCheck":     skipGeoCheck,
+		"speedTestURL":      speedTestURL,
+		"speedTestDefault":  defaultSpeedURL,
+		"speedTestWorkers":  speedTestWorkers,
+		"proxySpeedEnabled": proxySpeedEnabled,
+		"debug":             debugMode,
+		"version":           appVersion,
+		"releaseURL":        releaseLatestURL,
+		"cfCountry":         cfCountry,
+		"proxyWarning":      !skipGeoCheck && (!cfCountryOK || shouldWarnProxyCountry(cfCountry)),
+		"geoCheckOK":        cfCountryOK,
+		"skipGeoCheck":      skipGeoCheck,
 	})
 	if backgroundSession := currentBackgroundTaskSession(); backgroundSession != nil {
 		session.sendWSMessage("background_task_found", backgroundSession.backgroundSummary())

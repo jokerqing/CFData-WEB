@@ -1251,6 +1251,7 @@ func runOfficialCLI(cfg *cliConfig) error {
 }
 
 func runNSBCLI(cfg *cliConfig) error {
+	proxyStarted := time.Now()
 	if strings.TrimSpace(cfg.file) == "" && strings.TrimSpace(cfg.sourceURL) == "" {
 		return errors.New("非标模式需要通过 -nsbfile 或 -nsbsourceurl 指定输入来源")
 	}
@@ -1295,7 +1296,8 @@ func runNSBCLI(cfg *cliConfig) error {
 			return err
 		}
 	} else {
-		content, inputName, err = fetchNetworkSourceURLs(context.Background(), cfg.sourceURL)
+		_, proxyEnabled, _ := loadProxySpeedConfig()
+		content, inputName, err = fetchNetworkSourceURLsWithPolicy(context.Background(), cfg.sourceURL, proxyEnabled)
 		if err != nil {
 			return fmt.Errorf("获取非标网络输入失败: %w", err)
 		}
@@ -1318,7 +1320,13 @@ func runNSBCLI(cfg *cliConfig) error {
 	rows = filterCLIResultRowsByQualification(rows, cfg.nsbQualified, cfg.speedTest > 0 && cfg.nsbSpeedLimit > 0, cfg.nsbSpeedMin, cfg.lossMax)
 	if len(rows) == 0 {
 		fmt.Printf("%s[nsb]%s 没有符合导出条件的结果\n", ansiYellow, ansiReset)
+		if err := publishProxySpeedManifest(cfg, rows, proxyStarted); err != nil {
+			return err
+		}
 		return nil
+	}
+	if err := publishProxySpeedManifest(cfg, rows, proxyStarted); err != nil {
+		return err
 	}
 	return writeCLIExportAndMaybeUpload(cfg, rows, "nsb")
 }

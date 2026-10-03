@@ -519,6 +519,9 @@ func runNSBScanWorkers(ctx context.Context, total, maxWorkers, resultLimit int, 
 }
 
 func runNSBDownloadSpeed(ctx context.Context, ip string, port int, enableTLS bool, testURL string) (float64, string) {
+	if speed, err, enabled := runProxySpeedTest(ctx, ip, port, testURL); enabled {
+		return speed * 1024, err
+	}
 	const speedWindow = 10 * time.Second
 	const speedMaxBytes = 200 * 1024 * 1024
 
@@ -853,6 +856,9 @@ func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent,
 		session.sendWSMessage("log", fmt.Sprintf("真实 WebSocket 探测完成：%d 个节点连续 %d/%d 次握手成功", len(nsbResults), wsProbe.Attempts, wsProbe.Attempts))
 	}
 
+	if _, proxyEnabled, _ := loadProxySpeedConfig(); proxyEnabled {
+		nsbResults = uniqueProxySpeedCandidates(nsbResults)
+	}
 	completionStatus := "complete"
 	completionMessage := "测试完成"
 	qualifiedCount := 0
