@@ -25,12 +25,13 @@ const (
 )
 
 type wsProbeConfig struct {
-	Enabled   bool   `json:"enabled"`
-	Host      string `json:"host"`
-	Path      string `json:"path"`
-	Attempts  int    `json:"attempts"`
-	TimeoutMS int    `json:"timeoutMs"`
-	Workers   int    `json:"workers"`
+	Enabled      bool   `json:"enabled"`
+	Host         string `json:"host"`
+	Path         string `json:"path"`
+	Attempts     int    `json:"attempts"`
+	TimeoutMS    int    `json:"timeoutMs"`
+	MaxLatencyMS int    `json:"maxLatencyMs,omitempty"`
+	Workers      int    `json:"workers"`
 }
 
 type wsProbeOutcome struct {
@@ -85,6 +86,9 @@ func normalizeWSProbeConfig(cfg wsProbeConfig) (wsProbeConfig, error) {
 	if cfg.TimeoutMS > maxWSProbeTimeoutMS {
 		return cfg, fmt.Errorf("WebSocket 单次超时不能超过 %d 毫秒", maxWSProbeTimeoutMS)
 	}
+	if cfg.MaxLatencyMS < 0 || cfg.MaxLatencyMS > maxWSProbeTimeoutMS {
+		return cfg, fmt.Errorf("WebSocket 平均延迟上限必须在 0-%d 毫秒之间", maxWSProbeTimeoutMS)
+	}
 	if cfg.Workers <= 0 {
 		cfg.Workers = defaultWSProbeWorkers
 	}
@@ -113,7 +117,7 @@ func probeWebSocketEndpointWithTLSConfig(ctx context.Context, ip string, port in
 		cancel()
 		if err != nil {
 			outcome.LastError = err.Error()
-			continue
+			break
 		}
 		outcome.Successes++
 		totalDuration += duration
@@ -122,6 +126,10 @@ func probeWebSocketEndpointWithTLSConfig(ctx context.Context, ip string, port in
 		outcome.AvgDuration = totalDuration / time.Duration(outcome.Successes)
 	}
 	outcome.Healthy = outcome.Successes == outcome.Attempts
+	if outcome.Healthy && cfg.MaxLatencyMS > 0 && outcome.AvgDuration > time.Duration(cfg.MaxLatencyMS)*time.Millisecond {
+		outcome.Healthy = false
+		outcome.LastError = fmt.Sprintf("WebSocket 平均延迟 %.2fms 超过 %dms", float64(outcome.AvgDuration)/float64(time.Millisecond), cfg.MaxLatencyMS)
+	}
 	if outcome.Healthy {
 		outcome.LastError = ""
 	}

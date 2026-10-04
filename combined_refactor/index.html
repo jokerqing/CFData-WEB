@@ -1908,6 +1908,10 @@
                     <input id="nsbWSTimeout" type="number" min="100" max="60000" value="8000" disabled>
                 </div>
                 <div class="option-item">
+                    <span class="label" title="连续成功握手的平均延迟上限，单位毫秒；0 表示不限制，与单次超时分别设置">⏱️ WS 平均延迟上限</span>
+                    <input id="nsbWSMaxLatency" type="number" min="0" max="60000" value="0" disabled>
+                </div>
+                <div class="option-item">
                     <span class="label" title="同时探测的候选节点数量">⚙️ WS 并发</span>
                     <input id="nsbWSWorkers" type="number" min="1" max="200" value="20" disabled>
                 </div>
@@ -2690,7 +2694,7 @@
 
         function updateNSBWSProbeControls() {
             const enabled = String(document.getElementById('nsbWSProbeEnabled')?.value || 'off').toLowerCase() === 'on';
-            ['nsbWSHost', 'nsbWSPath', 'nsbWSAttempts', 'nsbWSTimeout', 'nsbWSWorkers'].forEach((id) => {
+            ['nsbWSHost', 'nsbWSPath', 'nsbWSAttempts', 'nsbWSTimeout', 'nsbWSMaxLatency', 'nsbWSWorkers'].forEach((id) => {
                 const input = document.getElementById(id);
                 if (input) input.disabled = !enabled;
             });
@@ -2702,6 +2706,7 @@
             let path = String(document.getElementById('nsbWSPath')?.value || '/').trim() || '/';
             const attempts = parseInt(document.getElementById('nsbWSAttempts')?.value || '3', 10) || 0;
             const timeoutMs = parseInt(document.getElementById('nsbWSTimeout')?.value || '8000', 10) || 0;
+            const maxLatencyMs = parseInt(document.getElementById('nsbWSMaxLatency')?.value || '0', 10) || 0;
             const workers = parseInt(document.getElementById('nsbWSWorkers')?.value || '20', 10) || 0;
             if (!path.startsWith('/')) path = '/' + path;
             if (!enabled) return { enabled: false, host: '', path: '/', attempts: 3, timeoutMs: 8000, workers: 20 };
@@ -2709,12 +2714,13 @@
             if (!host || host.includes('://') || /[\/?#]/.test(host)) error = 'WS Host / SNI 只能填写域名，不能包含协议、端口或路径';
             else if (attempts < 1 || attempts > 10) error = 'WS 连续探测次数必须在 1-10 之间';
             else if (timeoutMs < 100 || timeoutMs > 60000) error = 'WS 单次超时必须在 100-60000 毫秒之间';
+            else if (maxLatencyMs < 0 || maxLatencyMs > 60000) error = 'WS 平均延迟上限必须在 0-60000 毫秒之间';
             else if (workers < 1 || workers > 200) error = 'WS 探测并发必须在 1-200 之间';
             if (error) {
                 if (showError) showNoticeCard(error);
                 return null;
             }
-            return { enabled, host, path, attempts, timeoutMs, workers };
+            return { enabled, host, path, attempts, timeoutMs, maxLatencyMs, workers };
         }
 
         function updateNSBFallbackPortDefault() {
@@ -2861,6 +2867,7 @@
                     wsPath: val('nsbWSPath'),
                     wsAttempts: val('nsbWSAttempts'),
                     wsTimeout: val('nsbWSTimeout'),
+                    wsMaxLatency: val('nsbWSMaxLatency'),
                     wsWorkers: val('nsbWSWorkers'),
                 },
             };
@@ -2905,6 +2912,7 @@
             setValue('nsbWSPath', n.wsPath || '/');
             setValue('nsbWSAttempts', n.wsAttempts || 3);
             setValue('nsbWSTimeout', n.wsTimeout || 8000);
+            setValue('nsbWSMaxLatency', n.wsMaxLatency || 0);
             setValue('nsbWSWorkers', n.wsWorkers || 20);
             if (o.speedUrl) applySpeedUrlConfig('officialSpeedUrl', 'officialSpeedUrlPreset', o.speedUrl);
             if (n.speedUrl) applySpeedUrlConfig('nsbSpeedUrl', 'nsbSpeedUrlPreset', n.speedUrl);
@@ -2988,6 +2996,7 @@
             result.nsb.wsPath = pick(c, ['nsbwspath']);
             result.nsb.wsAttempts = pick(c, ['nsbwsattempts']);
             result.nsb.wsTimeout = pick(c, ['nsbwstimeout']);
+            result.nsb.wsMaxLatency = pick(c, ['nsbwsmaxlatency']);
             result.nsb.wsWorkers = pick(c, ['nsbwsworkers']);
             return result;
         }
@@ -3700,6 +3709,7 @@
                 setValue('nsbWSPath', params.wsProbe.path || '/');
                 setValue('nsbWSAttempts', params.wsProbe.attempts || 3);
                 setValue('nsbWSTimeout', params.wsProbe.timeoutMs || 8000);
+                setValue('nsbWSMaxLatency', params.wsProbe.maxLatencyMs || 0);
                 setValue('nsbWSWorkers', params.wsProbe.workers || 20);
                 updateNSBWSProbeControls();
             }
@@ -6111,6 +6121,7 @@
                 setValue('nsbWSPath', wsProbe.path || '/');
                 setValue('nsbWSAttempts', wsProbe.attempts || 3);
                 setValue('nsbWSTimeout', wsProbe.timeoutMs || 8000);
+                setValue('nsbWSMaxLatency', wsProbe.maxLatencyMs || 0);
                 setValue('nsbWSWorkers', wsProbe.workers || 20);
                 updateNSBSpeedControls();
                 updateNSBWSProbeControls();

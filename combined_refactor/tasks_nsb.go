@@ -518,8 +518,12 @@ func runNSBScanWorkers(ctx context.Context, total, maxWorkers, resultLimit int, 
 	return wasCanceled
 }
 
-func runNSBDownloadSpeed(ctx context.Context, ip string, port int, enableTLS bool, testURL string) (float64, string) {
-	if speed, err, enabled := runProxySpeedTest(ctx, ip, port, testURL); enabled {
+func runNSBDownloadSpeed(ctx context.Context, ip string, port int, enableTLS bool, testURL string, minimumMiBps ...float64) (float64, string) {
+	minimumMbps := proxySpeedMinimumMbps
+	if len(minimumMiBps) > 0 {
+		minimumMbps = max(minimumMbps, minimumMiBps[0]*8*1024*1024/1e6)
+	}
+	if speed, err, enabled := runProxySpeedTestWithMinimum(ctx, ip, port, testURL, minimumMbps); enabled {
 		return speed * 1024, err
 	}
 	const speedWindow = 10 * time.Second
@@ -856,8 +860,9 @@ func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent,
 		session.sendWSMessage("log", fmt.Sprintf("真实 WebSocket 探测完成：%d 个节点连续 %d/%d 次握手成功", len(nsbResults), wsProbe.Attempts, wsProbe.Attempts))
 	}
 
+	var proxyAlternatives map[string][]iptestResult
 	if _, proxyEnabled, _ := loadProxySpeedConfig(); proxyEnabled {
-		nsbResults = uniqueProxySpeedCandidates(nsbResults)
+		nsbResults, proxyAlternatives = groupProxySpeedCandidates(nsbResults)
 	}
 	completionStatus := "complete"
 	completionMessage := "测试完成"
@@ -888,8 +893,15 @@ func runNSBTask(ctx context.Context, session *appSession, fileName, fileContent,
 				failMutex.Unlock()
 			}
 		}, func(idx int) (float64, string) {
+			if candidates := proxyAlternatives[nsbResults[idx].ipAddr]; len(candidates) > 0 {
+				chosen, speed, speedErr := runProxySpeedAlternatives(ctx, candidates, speedMin, func(candidate iptestResult) (float64, string) {
+					return runNSBDownloadSpeed(ctx, candidate.ipAddr, candidate.port, enableTLS, speedURL, speedMin)
+				})
+				nsbResults[idx] = chosen
+				return speed, speedErr
+			}
 			res := &nsbResults[idx]
-			return runNSBDownloadSpeed(ctx, res.ipAddr, res.port, enableTLS, speedURL)
+			return runNSBDownloadSpeed(ctx, res.ipAddr, res.port, enableTLS, speedURL, speedMin)
 		})
 		if speedCanceled {
 			wasCanceled = true
@@ -980,7 +992,7 @@ func runNSBSpeedBatch(ctx context.Context, session *appSession, rows []nsbScanMe
 		session.sendWSMessage("nsb_scan_result", res.toNSBLiveMessage(res.speedText, compact))
 	}, func(idx int) (float64, string) {
 		res := &results[idx]
-		return runNSBDownloadSpeed(ctx, res.ipAddr, res.port, enableTLS, speedURL)
+		return runNSBDownloadSpeed(ctx, res.ipAddr, res.port, enableTLS, speedURL, speedMin)
 	})
 
 	qualifiedCount := 0

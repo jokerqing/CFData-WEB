@@ -110,6 +110,7 @@ type cliFileConfig struct {
 	NSBWSPath       string  `json:"nsbwspath"`
 	NSBWSAttempts   int     `json:"nsbwsattempts"`
 	NSBWSTimeout    int     `json:"nsbwstimeout"`
+	NSBWSMaxLatency int     `json:"nsbwsmaxlatency"`
 	NSBWSWorkers    int     `json:"nsbwsworkers"`
 	Format          string  `json:"format"`
 	Fields          string  `json:"fields"`
@@ -249,6 +250,7 @@ var (
 		{name: "nsbwspath", description: "真实 WebSocket 请求路径", defaultValue: "/"},
 		{name: "nsbwsattempts", description: "每个候选连续 WebSocket 探测次数，必须全部成功", defaultValue: "3"},
 		{name: "nsbwstimeout", description: "WebSocket 单次握手超时，单位毫秒", defaultValue: "8000"},
+		{name: "nsbwsmaxlatency", description: "WebSocket 平均握手延迟上限，单位毫秒；0 表示不限制", defaultValue: "0"},
 		{name: "nsbwsworkers", description: "WebSocket 探测并发数", defaultValue: "20"},
 	}
 )
@@ -291,6 +293,7 @@ func registerCLIFlags() *cliConfig {
 	flag.StringVar(&cfg.wsProbe.Path, "nsbwspath", "/", "真实 WebSocket 请求路径")
 	flag.IntVar(&cfg.wsProbe.Attempts, "nsbwsattempts", defaultWSProbeAttempts, "每个候选连续 WebSocket 探测次数，必须全部成功")
 	flag.IntVar(&cfg.wsProbe.TimeoutMS, "nsbwstimeout", defaultWSProbeTimeoutMS, "WebSocket 单次握手超时，单位毫秒")
+	flag.IntVar(&cfg.wsProbe.MaxLatencyMS, "nsbwsmaxlatency", 0, "WebSocket 平均握手延迟上限，单位毫秒；0 表示不限制")
 	flag.IntVar(&cfg.wsProbe.Workers, "nsbwsworkers", defaultWSProbeWorkers, "WebSocket 探测并发数")
 	flag.BoolVar(&cfg.showProgress, "progress", true, "CLI 模式输出进度日志")
 	flag.BoolVar(&cfg.noColor, "nocolor", false, "禁用 ANSI 颜色输出（cmd 等不支持的终端建议开启）")
@@ -560,6 +563,7 @@ func applyCLIEnvConfig(cfg *cliConfig, provided map[string]bool) {
 	setString("nsbwspath", "CFDATA_NSBWSPATH", &cfg.wsProbe.Path)
 	setInt("nsbwsattempts", "CFDATA_NSBWSATTEMPTS", &cfg.wsProbe.Attempts)
 	setInt("nsbwstimeout", "CFDATA_NSBWSTIMEOUT", &cfg.wsProbe.TimeoutMS)
+	setInt("nsbwsmaxlatency", "CFDATA_NSBWSMAXLATENCY", &cfg.wsProbe.MaxLatencyMS)
 	setInt("nsbwsworkers", "CFDATA_NSBWSWORKERS", &cfg.wsProbe.Workers)
 }
 
@@ -846,6 +850,7 @@ func buildCLIConfigHelp() []cliConfigHelp {
 		{Name: "nsbwspath", Description: "真实 WebSocket 请求路径", Default: "/"},
 		{Name: "nsbwsattempts", Description: "每个候选连续 WebSocket 探测次数，必须全部成功", Default: "3"},
 		{Name: "nsbwstimeout", Description: "WebSocket 单次握手超时，单位毫秒", Default: "8000"},
+		{Name: "nsbwsmaxlatency", Description: "WebSocket 平均握手延迟上限，单位毫秒；0 表示不限制", Default: "0"},
 		{Name: "nsbwsworkers", Description: "WebSocket 探测并发数", Default: "20"},
 		{Name: "format", Description: "导出/上传内容格式", Default: "txt", Options: []string{"csv", "txt"}},
 		{Name: "fields", Description: "导出字段；支持 compact、all、ipport 或逗号分隔字段 key；自定义字段可写在这里排序", Default: "compact", Options: []string{"compact", "all", "ipport", "ipport,dc,loc", "ipport,latency,dc,loc"}},
@@ -956,6 +961,7 @@ func applyCLIFileConfig(cfg *cliConfig, fileCfg cliFileConfig, provided map[stri
 	setString("nsbwspath", &cfg.wsProbe.Path, fileCfg.NSBWSPath)
 	setInt("nsbwsattempts", &cfg.wsProbe.Attempts, fileCfg.NSBWSAttempts)
 	setInt("nsbwstimeout", &cfg.wsProbe.TimeoutMS, fileCfg.NSBWSTimeout)
+	setInt("nsbwsmaxlatency", &cfg.wsProbe.MaxLatencyMS, fileCfg.NSBWSMaxLatency)
 	setInt("nsbwsworkers", &cfg.wsProbe.Workers, fileCfg.NSBWSWorkers)
 }
 
@@ -1442,6 +1448,7 @@ func printCLIConfig(cfg *cliConfig) {
 		{"nsbwspath", lookupCLIFlagDescription(cliNSBFlags, "nsbwspath"), cfg.wsProbe.Path, "/"},
 		{"nsbwsattempts", lookupCLIFlagDescription(cliNSBFlags, "nsbwsattempts"), strconv.Itoa(cfg.wsProbe.Attempts), "3"},
 		{"nsbwstimeout", lookupCLIFlagDescription(cliNSBFlags, "nsbwstimeout"), strconv.Itoa(cfg.wsProbe.TimeoutMS), "8000"},
+		{"nsbwsmaxlatency", "WebSocket 平均握手延迟上限，单位毫秒；0 表示不限制", strconv.Itoa(cfg.wsProbe.MaxLatencyMS), "0"},
 		{"nsbwsworkers", lookupCLIFlagDescription(cliNSBFlags, "nsbwsworkers"), strconv.Itoa(cfg.wsProbe.Workers), "20"},
 	})
 	fmt.Println(colorize("----------------------------------------", ansiCyan))

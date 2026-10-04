@@ -22,7 +22,7 @@ import (
 )
 
 const googleProxySpeedURL = "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
-const proxySpeedBytes int64 = 10_000_000
+const proxySpeedBytes int64 = 50_000_000
 const proxySpeedRounds = 3
 const proxySpeedMinimumMbps = 20.0
 
@@ -37,10 +37,12 @@ type proxySpeedRound struct {
 	Mbps    float64 `json:"mbps"`
 }
 type proxySpeedProof struct {
-	Endpoint    string            `json:"endpoint"`
-	CheckedAt   int64             `json:"checkedAt"`
-	MinimumMbps float64           `json:"minimumMbps"`
-	Rows        []proxySpeedRound `json:"rows"`
+	Endpoint              string            `json:"endpoint"`
+	CheckedAt             int64             `json:"checkedAt"`
+	MinimumMbps           float64           `json:"minimumMbps"`
+	Rows                  []proxySpeedRound `json:"rows"`
+	WSAverageMilliseconds float64           `json:"wsAverageMilliseconds,omitempty"`
+	WSAttempts            int               `json:"wsAttempts,omitempty"`
 }
 
 var proxySpeedProofs sync.Map
@@ -87,7 +89,7 @@ func proxySpeedXrayConfig(cfg proxySpeedConfig, ip string, port, listenPort int)
 	return json.Marshal(settings)
 }
 
-func downloadProxySpeedRound(ctx context.Context, client *http.Client, target string) (proxySpeedRound, error) {
+func downloadProxySpeedRound(ctx context.Context, client *http.Client, target string, minimumMbps ...float64) (proxySpeedRound, error) {
 	row := proxySpeedRound{}
 	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
 	if err != nil {
@@ -96,6 +98,14 @@ func downloadProxySpeedRound(ctx context.Context, client *http.Client, target st
 	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", proxySpeedBytes-1))
 	req.Header.Set("Accept-Encoding", "identity")
 	start := time.Now()
+	if len(minimumMbps) > 0 && minimumMbps[0] > 0 {
+		// With a fixed byte count, a round cannot recover to the minimum speed
+		// after this elapsed time, even if the remaining bytes arrive instantly.
+		budget := time.Duration(float64(proxySpeedBytes) * 8 / 1e6 / minimumMbps[0] * float64(time.Second))
+		roundCtx, cancel := context.WithDeadline(ctx, start.Add(budget))
+		defer cancel()
+		req = req.WithContext(roundCtx)
+	}
 	response, err := client.Do(req)
 	if err != nil {
 		return row, fmt.Errorf("真实代理下载连接失败或超时: %v", err)
@@ -115,6 +125,11 @@ func downloadProxySpeedRound(ctx context.Context, client *http.Client, target st
 }
 
 func runProxySpeedTest(ctx context.Context, ip string, port int, target string) (float64, string, bool) {
+	return runProxySpeedTestWithMinimum(ctx, ip, port, target, proxySpeedMinimumMbps)
+}
+
+func runProxySpeedTestWithMinimum(ctx context.Context, ip string, port int, target string, minimumMbps float64) (float64, string, bool) {
+	minimumMbps = max(proxySpeedMinimumMbps, minimumMbps)
 	cfg, enabled, err := loadProxySpeedConfig()
 	if !enabled {
 		return 0, "", false
@@ -175,12 +190,12 @@ func runProxySpeedTest(ctx context.Context, ip string, port int, target string) 
 	client := &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	proof := proxySpeedProof{Endpoint: net.JoinHostPort(ip, strconv.Itoa(port)), MinimumMbps: 1e9}
 	for i := 0; i < proxySpeedRounds; i++ {
-		row, e := downloadProxySpeedRound(ctx, client, target)
+		row, e := downloadProxySpeedRound(ctx, client, target, minimumMbps)
 		if e != nil {
 			return 0, e.Error(), true
 		}
-		if row.Mbps < proxySpeedMinimumMbps {
-			return 0, "真实代理下载低于 20 Mbps", true
+		if row.Mbps < minimumMbps {
+			return 0, fmt.Sprintf("真实代理下载低于 %.2f Mbps", minimumMbps), true
 		}
 		proof.Rows = append(proof.Rows, row)
 		proof.MinimumMbps = min(proof.MinimumMbps, row.Mbps)
@@ -204,6 +219,7 @@ func publishProxySpeedManifest(cfg *cliConfig, rows []cliResultRow, started time
 		return nil
 	}
 	proofs := []proxySpeedProof{}
+	requiredMbps := max(proxySpeedMinimumMbps, cfg.nsbSpeedMin*8*1024*1024/1e6)
 	for _, row := range rows {
 		endpoint := net.JoinHostPort(row["ip"], row["port"])
 		value, ok := proxySpeedProofs.Load(endpoint)
@@ -211,8 +227,16 @@ func publishProxySpeedManifest(cfg *cliConfig, rows []cliResultRow, started time
 			continue
 		}
 		proof := value.(proxySpeedProof)
-		if proof.CheckedAt < started.Unix() || len(proof.Rows) != proxySpeedRounds || proof.MinimumMbps < proxySpeedMinimumMbps {
+		if proof.CheckedAt < started.Unix() || len(proof.Rows) != proxySpeedRounds || proof.MinimumMbps < requiredMbps {
 			continue
+		}
+		if cfg.wsProbe.Enabled {
+			latency, err := strconv.ParseFloat(strings.TrimSuffix(row["wsLatency"], "ms"), 64)
+			if err != nil || latency <= 0 || row["wsSuccessRate"] != fmt.Sprintf("%d/%d", cfg.wsProbe.Attempts, cfg.wsProbe.Attempts) || (cfg.wsProbe.MaxLatencyMS > 0 && latency > float64(cfg.wsProbe.MaxLatencyMS)) {
+				continue
+			}
+			proof.WSAverageMilliseconds = latency
+			proof.WSAttempts = cfg.wsProbe.Attempts
 		}
 		proofs = append(proofs, proof)
 	}
@@ -220,7 +244,7 @@ func publishProxySpeedManifest(cfg *cliConfig, rows []cliResultRow, started time
 	if len(proofs) < minimumNodes {
 		return fmt.Errorf("真实代理测速合格节点少于目标 %d 个，保留上次发布结果", minimumNodes)
 	}
-	data, err := json.MarshalIndent(map[string]any{"schema": 3, "producer": "CFData-WEB", "sourceIP": "192.168.88.19", "generatedAt": time.Now().Unix(), "speedURL": cfg.speedURL, "thresholdMbps": proxySpeedMinimumMbps, "bytesPerRound": proxySpeedBytes, "rounds": proxySpeedRounds, "nodes": proofs}, "", "  ")
+	data, err := json.MarshalIndent(map[string]any{"schema": 3, "producer": "CFData-WEB", "sourceIP": "192.168.88.19", "generatedAt": time.Now().Unix(), "speedURL": cfg.speedURL, "thresholdMbps": requiredMbps, "wsMaxLatencyMs": cfg.wsProbe.MaxLatencyMS, "bytesPerRound": proxySpeedBytes, "rounds": proxySpeedRounds, "nodes": proofs}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -245,7 +269,15 @@ func publishProxySpeedManifest(cfg *cliConfig, rows []cliResultRow, started time
 
 // Count distinct public IPv4 addresses, rather than multiple ports of one IP.
 func uniqueProxySpeedCandidates(results []iptestResult) []iptestResult {
-	seen := map[string]bool{}
+	selected, _ := groupProxySpeedCandidates(results)
+	return selected
+}
+
+// Keep eligible alternate ports for each IP: a working WS handshake does not
+// guarantee that a particular port can carry a complete proxy download.
+func groupProxySpeedCandidates(results []iptestResult) ([]iptestResult, map[string][]iptestResult) {
+	groups := map[string][]iptestResult{}
+	seenEndpoints := map[string]bool{}
 	selected := make([]iptestResult, 0, len(results))
 	for _, result := range results {
 		ip := net.ParseIP(result.ipAddr)
@@ -253,11 +285,33 @@ func uniqueProxySpeedCandidates(results []iptestResult) []iptestResult {
 			continue
 		}
 		address := ip.String()
-		if seen[address] {
+		endpoint := net.JoinHostPort(address, strconv.Itoa(result.port))
+		if seenEndpoints[endpoint] {
 			continue
 		}
-		seen[address] = true
-		selected = append(selected, result)
+		seenEndpoints[endpoint] = true
+		if len(groups[address]) == 0 {
+			selected = append(selected, result)
+		}
+		groups[address] = append(groups[address], result)
 	}
-	return selected
+	return selected, groups
+}
+
+// The caller reports only the selected successful endpoint for each IP.
+func runProxySpeedAlternatives(ctx context.Context, candidates []iptestResult, minimumMiBps float64, work func(iptestResult) (float64, string)) (iptestResult, float64, string) {
+	var chosen iptestResult
+	var speed float64
+	var speedErr string
+	for _, candidate := range candidates {
+		if ctx.Err() != nil {
+			return chosen, 0, "测速已取消"
+		}
+		chosen = candidate
+		speed, speedErr = work(candidate)
+		if speedErr == "" && speed/1024 >= minimumMiBps {
+			return chosen, speed, ""
+		}
+	}
+	return chosen, speed, speedErr
 }

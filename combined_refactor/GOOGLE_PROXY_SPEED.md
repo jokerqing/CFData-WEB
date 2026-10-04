@@ -38,15 +38,21 @@ proxy-speed/ca-certificates.crt
 ## 测速规则与定时设置
 
 - 下载地址固定为 `https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb`。
-- 每个节点连续下载三轮，每轮请求前 10,000,000 字节；必须收到 HTTP 206、正确的 Content-Range 和完整字节数。
-- 每轮超时 15 秒，三轮均须达到 20 Mbps。返回三轮中的最低速度，计时包含连接与下载过程。
-- 非标模式按公网 IPv4 去重，同一 IP 的不同端口只保留一个候选。
-- 建议定时任务设置 `mode: "nsb"`、`speedTest: 1`、`speedMin: 2.5`、`speedLimit: 10`，并显式填写上述 `speedURL`。`speedMin` 按 MiB/s 计算，2.5 MiB/s 约为 20.97 Mbps。
+- 每个节点连续下载三轮，每轮请求前 50,000,000 字节；必须收到 HTTP 206、正确的 Content-Range 和完整字节数。较大范围减少连接建立对短下载的影响。
+- 每轮超时最多 15 秒，三轮均须达到 `max(20 Mbps, speedMin)`。按完整字节数与速度门槛计算更短的截止时间：5 MiB/s 时约 9.54 秒，超过后已经不可能达到门槛。返回三轮中的最低速度，计时包含连接与下载过程。
+- 非标模式按公网 IPv4 分组，同一 IP 的不同端口保留为备用；前一端口下载失败或速度不足时，测试下一端口，成功后仅计为一个合格 IP，并保留成功端口对应的 WS 证据。
+- 当前定时任务设置 `mode: "nsb"`、`speedTest: 1`、`speedMin: 5`、`speedLimit: 10`，并显式填写上述 `speedURL`。`speedMin` 按 MiB/s 计算，5 MiB/s 约为 41.94 Mbps。
 - `sourceURLs` 可填写 bestcf.pages.dev 的多个候选地址列表。代理测速模式下单个来源临时失败会跳过，所有来源失败则任务失败。
-- 每 15 分钟执行意味着在 `times` 中配置每天各小时的 `HH:00`、`HH:15`、`HH:30`、`HH:45`（Asia/Shanghai）。已有任务仍在运行时不会启动重叠批次。
+- 每小时执行：在 `times` 中配置每天 24 个整点 `HH:00`（Asia/Shanghai）。已有任务仍在运行时不会启动重叠批次。
 
 ## 发布给 HAProxy
 
 非标定时任务完成筛选后，将本轮合格节点和三轮下载证据原子写入 `cfdata-proxy-quality.json`（schema 3）。仅当合格节点数达到 `max(2, speedLimit)` 时替换该文件；十节点配置下，不足十个会报错并保留上次发布结果。
 
 当前部署在 192.168.88.19 执行全部下载测速，清单中的 `sourceIP` 为此部署地址。192.168.88.18 的 HAProxy 通过另外部署的同步程序消费清单；本分支提供清单生产端，不包含 HAProxy 的部署脚本。
+
+## 平均 WS 延迟筛选
+
+`wsProbe.maxLatencyMs` 是连续成功握手的平均延迟上限，与 `wsProbe.timeoutMs` 的单次握手超时分开设置。例：`attempts: 3`、`maxLatencyMs: 800`、`timeoutMs: 3000` 要求三次均成功且平均延迟不超过 800 毫秒。CLI 对应参数为 `-nsbwsmaxlatency=800 -nsbwstimeout=3000`；平均上限为 0 时不限制。第一次握手失败后立即结束该节点探测。
+
+将定时任务 `speedMin` 设为 5 时，三轮 Google 下载均须达到 5 MiB/s（约 41.94 Mbps），任一轮不足会提前结束该节点测试。发布清单记录实际速度门槛、WS 平均延迟与握手次数；不足十个合格节点时继续保留上次结果。

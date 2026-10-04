@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProxySpeedDownloadEvidence(t *testing.T) {
@@ -60,6 +61,43 @@ func TestProxySpeedCancellation(t *testing.T) {
 	cancel()
 	if _, err := downloadProxySpeedRound(ctx, http.DefaultClient, "https://dl.google.com/test"); err == nil {
 		t.Fatal("cancel ignored")
+	}
+}
+
+func TestProxySpeedAbortsRoundThatCannotReachRequiredThroughput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-%d/999999999", proxySpeedBytes-1))
+		w.WriteHeader(http.StatusPartialContent)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	client := server.Client()
+	client.Timeout = 15 * time.Second
+	start := time.Now()
+	// 50 MB at 400 Mbps allows one second including connection and transfer.
+	_, err := downloadProxySpeedRound(context.Background(), client, server.URL, 400)
+	if err == nil || time.Since(start) > 2*time.Second {
+		t.Fatalf("hopeless round did not stop at its throughput deadline: err=%v elapsed=%v", err, time.Since(start))
+	}
+}
+
+func TestProxySpeedTriesAlternatePortAndKeepsItsWSEvidence(t *testing.T) {
+	input := []iptestResult{{ipAddr: "216.236.59.147", port: 443}, {ipAddr: "216.236.59.147", port: 1891, wsDuration: 400 * time.Millisecond}, {ipAddr: "216.236.59.147", port: 1891}, {ipAddr: "43.174.218.1", port: 443}}
+	selected, groups := groupProxySpeedCandidates(input)
+	if len(selected) != 2 || len(groups["216.236.59.147"]) != 2 {
+		t.Fatal("must retain alternate ports without counting the IP twice")
+	}
+	var attempted []int
+	chosen, speed, speedErr := runProxySpeedAlternatives(context.Background(), groups["216.236.59.147"], 5, func(candidate iptestResult) (float64, string) {
+		attempted = append(attempted, candidate.port)
+		if candidate.port == 443 {
+			return 0, "connection reset"
+		}
+		return 6 * 1024, ""
+	})
+	if fmt.Sprint(attempted) != "[443 1891]" || chosen.port != 1891 || chosen.wsDuration != 400*time.Millisecond || speed != 6*1024 || speedErr != "" {
+		t.Fatalf("alternate endpoint evidence lost: %#v speed=%v err=%v attempted=%v", chosen, speed, speedErr, attempted)
 	}
 }
 
