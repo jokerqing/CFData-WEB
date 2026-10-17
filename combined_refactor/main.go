@@ -247,6 +247,7 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(data)
 	}))
+	http.HandleFunc("/curated-candidates.txt", requireAuth(handleCuratedCandidates))
 	http.HandleFunc("/ws", requireAuth(handleWebSocket))
 
 	addr := fmt.Sprintf(":%d", listenPort)
