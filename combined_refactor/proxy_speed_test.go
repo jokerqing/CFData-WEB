@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -126,5 +128,54 @@ func TestProxySpeedUsesCandidateAndProductionTransport(t *testing.T) {
 	}
 	if strings.Contains(string(data), "192.168.88.18") {
 		t.Fatal("measurement must dial candidate, not load balancer")
+	}
+}
+
+func TestProxySpeedPublicationMinimumIsIndependentOfSearchTarget(t *testing.T) {
+	for _, count := range []int{0, 2, 3, 9, 10} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			cfg := &cliConfig{nsbSpeedLimit: 10, nsbSpeedMin: 5, wsProbe: wsProbeConfig{Enabled: true, Attempts: 3, MaxLatencyMS: 800}}
+			path := filepath.Join(t.TempDir(), "quality.json")
+			old := []byte(`{"previous":"published"}`)
+			if err := os.WriteFile(path, old, 0600); err != nil {
+				t.Fatal(err)
+			}
+			started := time.Now().Add(-time.Second)
+			var rows []cliResultRow
+			for i := 0; i < count; i++ {
+				ip := fmt.Sprintf("8.8.4.%d", i+1)
+				endpoint := ip + ":443"
+				proof := proxySpeedProof{Endpoint: endpoint, CheckedAt: time.Now().Unix(), MinimumMbps: 50, Rows: make([]proxySpeedRound, proxySpeedRounds)}
+				proxySpeedProofs.Store(endpoint, proof)
+				t.Cleanup(func() { proxySpeedProofs.Delete(endpoint) })
+				rows = append(rows, cliResultRow{"ip": ip, "port": "443", "wsLatency": "500ms", "wsSuccessRate": "3/3"})
+			}
+			err := writeProxySpeedManifest(cfg, rows, started, path)
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if count < 3 {
+				if err == nil || string(data) != string(old) {
+					t.Fatalf("insufficient results must preserve previous publication: err=%v data=%s", err, data)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var manifest struct {
+				Nodes []proxySpeedProof `json:"nodes"`
+			}
+			if err := json.Unmarshal(data, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			if len(manifest.Nodes) != count {
+				t.Fatalf("must publish actual results without padding to target: got %d want %d", len(manifest.Nodes), count)
+			}
+			if cfg.nsbSpeedLimit != 10 {
+				t.Fatal("publication must not change search target")
+			}
+		})
 	}
 }

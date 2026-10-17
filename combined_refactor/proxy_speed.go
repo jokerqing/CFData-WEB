@@ -218,6 +218,11 @@ func publishProxySpeedManifest(cfg *cliConfig, rows []cliResultRow, started time
 	if !strings.HasPrefix(filepath.Base(cfg.outFile), "scheduled-nsb-results.") {
 		return nil
 	}
+	return writeProxySpeedManifest(cfg, rows, started, filepath.Join(proxySpeedDir(), "cfdata-proxy-quality.json"))
+}
+
+// The search target stays independent of the minimum safe publication size.
+func writeProxySpeedManifest(cfg *cliConfig, rows []cliResultRow, started time.Time, path string) error {
 	proofs := []proxySpeedProof{}
 	requiredMbps := max(proxySpeedMinimumMbps, cfg.nsbSpeedMin*8*1024*1024/1e6)
 	for _, row := range rows {
@@ -240,15 +245,14 @@ func publishProxySpeedManifest(cfg *cliConfig, rows []cliResultRow, started time
 		}
 		proofs = append(proofs, proof)
 	}
-	minimumNodes := max(2, cfg.nsbSpeedLimit)
+	const minimumNodes = 3
 	if len(proofs) < minimumNodes {
-		return fmt.Errorf("真实代理测速合格节点少于目标 %d 个，保留上次发布结果", minimumNodes)
+		return fmt.Errorf("真实代理测速合格节点少于最低发布数量 %d 个，保留上次发布结果", minimumNodes)
 	}
 	data, err := json.MarshalIndent(map[string]any{"schema": 3, "producer": "CFData-WEB", "sourceIP": "192.168.88.19", "generatedAt": time.Now().Unix(), "speedURL": cfg.speedURL, "thresholdMbps": requiredMbps, "wsMaxLatencyMs": cfg.wsProbe.MaxLatencyMS, "bytesPerRound": proxySpeedBytes, "rounds": proxySpeedRounds, "nodes": proofs}, "", "  ")
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(proxySpeedDir(), "cfdata-proxy-quality.json")
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".proxy-quality-*")
 	if err != nil {
 		return err
