@@ -172,6 +172,12 @@ func getURLBytesWithContext(ctx context.Context, targetURL string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
+	parts := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
+	if req.URL.Scheme == "https" && req.URL.Hostname() == "api.github.com" && len(parts) >= 5 && parts[0] == "repos" && parts[3] == "contents" {
+		// Contents endpoints otherwise return JSON metadata instead of the IP list.
+		req.Header.Set("Accept", "application/vnd.github.raw+json")
+		req.Header.Set("User-Agent", "CFData-WEB/"+appVersion)
+	}
 	resp, err := upstreamHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
